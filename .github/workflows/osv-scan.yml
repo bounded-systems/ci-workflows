@@ -36,6 +36,16 @@ on:
           what you want; set it only when scanning something other than the caller's ref.
         type: string
         default: ""
+      report-only:
+        description: >-
+          Downgrade VULNERABILITY findings from a hard failure to a warning. This is an
+          ADOPTION GRACE SETTING, not a posture choice: a repo with pre-existing
+          advisories can adopt the lane immediately (so it is instrumented and its
+          findings are visible) and clear them as separate work, instead of adoption and
+          remediation being the same blocking task. Remove it once the repo is clean.
+          Tool and network failures still fail hard regardless — see the scan step.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -256,15 +266,41 @@ jobs:
       # is the common case across the org and must not read as a broken lane.
       - name: Scan dependencies for known vulnerabilities
         working-directory: ${{ inputs.scan-path }}
+        env:
+          REPORT_ONLY: ${{ inputs.report-only }}
         run: |
-          set -euo pipefail
-          # Hard-fail posture (chosen for the first org-wide pass): exit 1 means
-          # vulnerabilities were found and the lane goes red. Any OTHER non-zero exit is a
-          # tool or network failure and must also fail loudly rather than pass as
-          # "nothing found" — so the exit code propagates untouched.
+          set -uo pipefail
+          # Default posture is HARD-FAIL: exit 1 means vulnerabilities were found and the
+          # lane goes red.
+          #
+          # The exit codes are triaged rather than propagated, because `report-only` must
+          # NOT be able to hide a broken lane. osv-scanner exits 1 for "vulnerabilities
+          # found"; anything else non-zero is a tool, network or usage failure. Only the
+          # former is downgradable — a scanner that could not run must fail loudly in
+          # every mode, or an adopting repo would show a reassuring green check while
+          # scanning nothing. That distinction is the whole reason this is not a bare
+          # `continue-on-error: true` on the step.
           #
           # Escape hatch for an accepted or unfixable finding: commit an `osv-scanner.toml`
           # next to the lockfile with an [[IgnoredVulns]] entry. It is picked up
           # automatically, is reviewed like any other diff, and leaves a written reason in
           # the tree instead of a silently weakened lane.
           osv-scanner scan source -r --allow-no-lockfiles .
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            exit 0
+          elif [ "$rc" -eq 1 ]; then
+            if [ "${REPORT_ONLY}" = "true" ]; then
+              echo "::warning::Known vulnerabilities found. This repo runs the scan lane in"\
+                   "report-only adoption grace, so the check is NOT failing. See the table"\
+                   "above, fix them, then drop 'report-only: true' from .github/workflows/deps.yml."
+              exit 0
+            fi
+            exit 1
+          else
+            echo "::error::osv-scanner exited $rc — this is a tool or network failure, not a"\
+                 "clean scan. Failing regardless of report-only: a lane that cannot run must"\
+                 "never report green."
+            exit "$rc"
+          fi
