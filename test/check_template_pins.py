@@ -78,6 +78,16 @@ def main():
                     "`# <ref>` comment recording what the SHA was"
                 )
 
+    if not checked:
+        # A check that verifies nothing must never report green — the whole point of
+        # this file. templates/*.yml existing with no `uses:` line at all means either
+        # the regex stopped matching the format or the templates lost their callers;
+        # both are bugs, and both would otherwise pass silently.
+        sys.exit(
+            f"found {len(files)} template file(s) but ZERO `uses:` pins — "
+            "refusing to report success on an empty check"
+        )
+
     if problems:
         sys.exit(
             "template pin problems:\n\n  "

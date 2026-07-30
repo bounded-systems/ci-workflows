@@ -88,6 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           rc=0
+          seen=0
           while IFS= read -r line; do
             slug="${line#*uses: }"; slug="${slug%@*}"
             sha="${line#*@}"; sha="${sha%% *}"
@@ -97,6 +98,7 @@ jobs:
               bounded-systems/ci-workflows/*) ;;
               *) echo "::warning::$slug@$sha is not a ci-workflows pin — not resolvable from local history"; continue ;;
             esac
+            seen=$((seen + 1))
             if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
               echo "✓ $sha  $(git log --format=%s -1 "$sha")"
             else
@@ -104,6 +106,14 @@ jobs:
               rc=1
             fi
           done < <(grep -rh "uses:.*@" templates/*.yml)
+          # An empty match set would run the loop zero times and exit 0 -- green having
+          # resolved nothing. That is the exact hollow-green shape this job exists to
+          # close, so it is refused explicitly rather than trusted not to happen.
+          if [ "$seen" -eq 0 ]; then
+            echo "::error::resolved ZERO template pins — refusing to report success on an empty check"
+            exit 1
+          fi
+          echo "resolved $seen template pin(s)"
           if [ "$rc" -ne 0 ]; then
             echo "::error::A template pin names no real commit. Derive SHAs with 'git rev-parse', never by hand."
             exit 1
