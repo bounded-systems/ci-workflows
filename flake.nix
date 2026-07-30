@@ -45,6 +45,23 @@
           ${pkgs.python3}/bin/python3 test/check_env_check_digest.py
           touch $out
         '';
+
+        # Mirrors the SHAPE half of self-test's `template-pins` job. The other half of
+        # that job — resolving each SHA with `git cat-file -e` — deliberately has no
+        # entry here and cannot have one: this derivation is a store path with no .git
+        # and no network, so resolution is impossible by construction, not merely
+        # unimplemented.
+        #
+        # That is the one sanctioned exception to the parity rule above, and it is
+        # recorded rather than silent. The rule's purpose — no test whose local result
+        # is untrustworthy — is intact: everything runnable offline runs in both
+        # runners, and the CI-only half is a strictly additional check, never a
+        # substitute for one that runs here.
+        template-pins = pkgs.runCommand "template-pins" { } ''
+          cd ${self}
+          ${pkgs.python3}/bin/python3 test/check_template_pins.py
+          touch $out
+        '';
       });
 
       devShells = forAll (pkgs: {

@@ -7,6 +7,23 @@ name: deps
 # workflow (one definition), and a fleet of identical callers means the next bump is
 # one review of one diff, applied everywhere by the same sed.
 #
+# "BYTE-IDENTICAL" MEANS AT ADOPTION, AND HAS EXACTLY ONE SANCTIONED DIVERGENCE:
+# the `report-only: true` line below, which each repo deletes once its findings are
+# clear (see the grace note further down). A mature adopter therefore differs from
+# this file by that one line — that is the intended end state, not drift. Any OTHER
+# difference is drift, including a stale pin.
+#
+# Unlike the canonical script, nothing gates this: templates/ has no drift lane
+# against its callers, so a caller left behind is invisible until someone diffs it.
+# That is exactly how the two 2026-07-30 adopters ended up four commits back with
+# nobody noticing (ci-workflows#10). Until such a gate exists, re-pin the callers in
+# the same change that bumps this file.
+#
+# NOT every consumer is a byte-identical copy. A repo that already has a single
+# combined test workflow may call the reusable lane from inside it instead (infra's
+# infra-test.yml does). Those are legitimate and are NOT measured against this file
+# — but they still carry a pin, and it still goes stale the same way.
+#
 # What a green check means: every lockfile ecosystem osv-scanner supports, plus the
 # npm subset of any v4/v5 deno.lock (converted in-lane). Still not scannable by
 # anything today, and logged per run: jsr-native deps and @jsr/* npm-compat mirrors

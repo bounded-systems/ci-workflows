@@ -57,6 +57,58 @@ jobs:
       - name: CANONICAL_SHA256 in env-check-drift.yml matches tools/cloud-env-check.mjs
         run: python3 test/check_env_check_digest.py
 
+  # Resolves the SHAs in templates/ against real commits. The COMPLEMENT of
+  # check_template_pins.py, not a duplicate — see that script's header for the split.
+  # Shape is checkable offline and runs in both runners; resolution needs git history,
+  # which `nix flake check` cannot provide (store path, no .git, no network).
+  #
+  # Closes the fourth hollow green in infra's docs/cloud-sessions.md: self-test once
+  # passed on a commit whose reusable-workflow pin was a nonexistent SHA. A template is
+  # copied verbatim into adopters, so a bad pin never fails here — it fails in every
+  # repo that adopts it, long after anyone connects it to this commit.
+  #
+  # fetch-depth: 0 is load-bearing. Under the default shallow checkout EVERY cat-file
+  # fails and this job red-lines on correct pins — loud rather than silent, but still
+  # wrong, and the fix is history, not deleting the check.
+  #
+  # Scope: templates/ currently pins only this repo's own workflows, so local history
+  # resolves everything. A third-party pin would need `git ls-remote` (network, and a
+  # different failure posture) — worth noticing before adding one, rather than
+  # discovering it when this job goes mysteriously red.
+  template-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Template pins are well-formed (shape)
+        run: python3 test/check_template_pins.py
+      - name: Template pins resolve to real commits
+        run: |
+          set -euo pipefail
+          rc=0
+          while IFS= read -r line; do
+            slug="${line#*uses: }"; slug="${slug%@*}"
+            sha="${line#*@}"; sha="${sha%% *}"
+            # Only this repo's own pins resolve from local history. Anything else is
+            # reported rather than silently passed.
+            case "$slug" in
+              bounded-systems/ci-workflows/*) ;;
+              *) echo "::warning::$slug@$sha is not a ci-workflows pin — not resolvable from local history"; continue ;;
+            esac
+            if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+              echo "✓ $sha  $(git log --format=%s -1 "$sha")"
+            else
+              echo "::error::$sha names no commit in this repository ($slug)"
+              rc=1
+            fi
+          done < <(grep -rh "uses:.*@" templates/*.yml)
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::A template pin names no real commit. Derive SHAs with 'git rev-parse', never by hand."
+            exit 1
+          fi
+
   converter:
     runs-on: ubuntu-latest
     steps:
