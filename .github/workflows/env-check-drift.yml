@@ -59,7 +59,7 @@ jobs:
           # sha256 of tools/cloud-env-check.mjs in bounded-systems/ci-workflows.
           # Bump this and the tools/ file together; check_env_check_digest.py fails if
           # they disagree, so a half-done update reddens this repo before any caller.
-          CANONICAL_SHA256: c530b86acd6df4215c04c2c93b20241fa25bfb06004e61ea723c8094008de2e0
+          CANONICAL_SHA256: 6fb0c3e16a4995c285d6ee4d09aca3857bc0903007e4d6f71716beec4444748b
           VENDORED: ${{ inputs.path }}
         run: |
           set -euo pipefail
