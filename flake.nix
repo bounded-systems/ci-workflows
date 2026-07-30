@@ -1,12 +1,17 @@
 {
   # Local reproducibility face of the CI test suite (ci-workflows#1).
   #
-  # `nix flake check` runs EXACTLY the two scripts self-test's converter job runs —
-  # one test suite, two runners. CI itself never installs Nix: the lane's leanness
-  # (nothing to install beyond one digest-pinned binary) is a feature, and the
-  # converter is stdlib-only Python precisely so both runners agree byte-for-byte.
-  # Determinism is enforced by the golden tests, not by the environment; the flake
-  # just pins a Python to run them with.
+  # `nix flake check` runs EXACTLY the scripts self-test runs — one test suite, two
+  # runners. CI itself never installs Nix: the lane's leanness (nothing to install
+  # beyond one digest-pinned binary) is a feature, and every test here is stdlib-only
+  # Python precisely so both runners agree byte-for-byte. Determinism is enforced by
+  # the golden tests, not by the environment; the flake just pins a Python to run
+  # them with.
+  #
+  # THAT PARITY IS THE POINT, SO IT IS LOAD-BEARING: a test that runs in only one
+  # runner is a test whose local result cannot be trusted, which is worse than not
+  # having it locally at all. When self-test gains a script, add it here in the same
+  # change. `test/` should have no file that neither runner executes.
   #
   # flake.lock: generate once with `nix flake lock` on a machine with Nix — the
   # session that authored this had none. Until it is committed, the nixpkgs input
@@ -22,10 +27,22 @@
     in
     {
       checks = forAll (pkgs: {
+        # Mirrors self-test's `converter` job, step for step.
         converter = pkgs.runCommand "converter-tests" { } ''
           cd ${self}
           ${pkgs.python3}/bin/python3 test/test_converter.py
           ${pkgs.python3}/bin/python3 test/check_embed_sync.py
+          ${pkgs.python3}/bin/python3 test/test_scan_posture.py
+          touch $out
+        '';
+
+        # Mirrors self-test's `env-check-digest` job. Separate derivation because it
+        # guards a different lane: a red here means env-check-drift would misfire on
+        # every ADOPTING repo (their correctly-vendored copies measured against a stale
+        # constant), not that the scan lane is broken.
+        env-check-digest = pkgs.runCommand "env-check-digest" { } ''
+          cd ${self}
+          ${pkgs.python3}/bin/python3 test/check_env_check_digest.py
           touch $out
         '';
       });
