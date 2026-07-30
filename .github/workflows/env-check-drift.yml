@@ -1,0 +1,90 @@
+name: env-check-drift
+
+# Fails when a caller's vendored .claude/hooks/cloud-env-check.mjs has drifted from the
+# canonical copy in this repo (infra#122).
+#
+# WHY THE SCRIPT IS VENDORED RATHER THAN IMPORTED:
+# cloud-env-check.mjs runs from a SessionStart hook, which fires BEFORE dependencies are
+# installed. Importing it from a registry would fetch it over the network using the very
+# allowlist it exists to validate — if the allowlist is broken the check cannot run,
+# precisely when it is needed. So every adopting repo keeps its own copy on disk, and the
+# cost of that choice is drift. This lane is the drift being loud instead of silent, the
+# same trade tools/deno-lock-cdx.py already makes against its embedded twin.
+#
+# WHY A DIGEST AND NOT A FETCH:
+# A reusable workflow's steps run in the CALLER's checkout, so this repo's tools/ is not
+# on disk here — the canonical bytes are not available to diff against. Fetching them
+# would put a network dependency inside a check about network configuration, which is the
+# same circularity the vendoring exists to avoid. Pinning the digest keeps the comparison
+# entirely offline.
+#
+# THE DIGEST IS DELIBERATELY NOT AN INPUT.
+# Same reasoning as the scanner pin in osv-scan.yml: a caller able to override it could
+# silently defeat the check by declaring its own drifted copy canonical. Updating the
+# canonical script is an edit HERE — to tools/cloud-env-check.mjs and to CANONICAL_SHA256
+# below, kept in step by test/check_env_check_digest.py — reviewed once and inherited by
+# every caller.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Runner label for the drift job.
+        type: string
+        default: ubuntu-latest
+      path:
+        description: >-
+          Path to the caller's vendored copy, relative to the repository root. The default
+          is the SessionStart hook location every adopter uses; override only if a repo
+          genuinely keeps it elsewhere.
+        type: string
+        default: .claude/hooks/cloud-env-check.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: env-check-drift
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      # Same pin as osv-scan.yml, so there is one checkout SHA to bump in this repo
+      # rather than two.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Vendored cloud-env-check.mjs matches canonical
+        env:
+          # sha256 of tools/cloud-env-check.mjs in bounded-systems/ci-workflows.
+          # Bump this and the tools/ file together; check_env_check_digest.py fails if
+          # they disagree, so a half-done update reddens this repo before any caller.
+          CANONICAL_SHA256: c530b86acd6df4215c04c2c93b20241fa25bfb06004e61ea723c8094008de2e0
+          VENDORED: ${{ inputs.path }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$VENDORED" ]; then
+            echo "::error::no vendored copy at $VENDORED"
+            echo "::error::This repo calls env-check-drift but has not vendored the script."
+            echo "::error::Copy tools/cloud-env-check.mjs from bounded-systems/ci-workflows"
+            echo "::error::to $VENDORED, or drop this caller if the repo does not use it."
+            exit 1
+          fi
+
+          got="$(sha256sum "$VENDORED" | cut -d' ' -f1)"
+          if [ "$got" != "$CANONICAL_SHA256" ]; then
+            echo "::error::$VENDORED has drifted from canonical."
+            echo "::error::  expected $CANONICAL_SHA256"
+            echo "::error::  found    $got"
+            echo "::error::"
+            echo "::error::If canonical changed: re-copy tools/cloud-env-check.mjs from"
+            echo "::error::  bounded-systems/ci-workflows and bump this caller's pin SHA."
+            echo "::error::If YOU changed the vendored copy: that edit belongs in"
+            echo "::error::  ci-workflows, not here — every other adopter needs it too."
+            echo "::error::The script is repo-agnostic by design; repo-specific settings"
+            echo "::error::belong in the handshake block of .claude/cloud-environment.json."
+            exit 1
+          fi
+
+          echo "✓ $VENDORED matches canonical ($got)"
