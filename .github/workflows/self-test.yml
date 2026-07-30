@@ -47,3 +47,9 @@ jobs:
         run: python3 test/test_converter.py
       - name: Embedded copy in osv-scan.yml matches tools/deno-lock-cdx.py
         run: python3 test/check_embed_sync.py
+      # Runs the scan step's triage under `bash -e`, the way GitHub actually invokes
+      # run steps. A prior version of the triage assumed errexit was off and the
+      # report-only flag silently did nothing on every caller; a local test that used
+      # plain `bash` passed anyway. This is that gap, closed.
+      - name: Scan posture — exit-code triage under bash -e
+        run: python3 test/test_scan_posture.py

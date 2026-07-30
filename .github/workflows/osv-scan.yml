@@ -270,6 +270,12 @@ jobs:
           REPORT_ONLY: ${{ inputs.report-only }}
         run: |
           set -uo pipefail
+          # `set +e` is LOAD-BEARING, not redundant. GitHub invokes run steps as
+          # `bash -e {0}` — errexit arrives on the COMMAND LINE, so a `set -uo pipefail`
+          # here leaves it on, and the shell would exit the moment osv-scanner returns 1,
+          # never reaching the triage below. That is exactly the bug this replaced: the
+          # grace flag silently did nothing because the script died before reading it.
+          set +e
           # Default posture is HARD-FAIL: exit 1 means vulnerabilities were found and the
           # lane goes red.
           #
