@@ -41,6 +41,13 @@ reconcile them rather than running both.
 
 ## Using `osv-scan`
 
+**The standardized way: copy [`templates/deps.yml`](templates/deps.yml) byte-identical to
+`.github/workflows/deps.yml` in the adopting repo.** Identical callers everywhere means
+the next scanner bump is one review of one diff, applied fleet-wide by the same sed. The
+template includes the weekly Tuesday rescan (one day after this repo's Monday self-test
+canary, so a broken digest is caught here before the fleet rescans on it). Hand-rolled
+callers are for repos that genuinely need different triggers:
+
 ```yaml
 name: deps
 on:
