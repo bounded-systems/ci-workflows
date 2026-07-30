@@ -11,6 +11,7 @@ With ~87 public repos to serve, a shared workflow has to live somewhere public.
 | workflow | what it does |
 |---|---|
 | `.github/workflows/osv-scan.yml` | Scans a repo's dependency lockfiles against the OSV database. Hard-fails on a known vulnerability. |
+| `.github/workflows/env-check-drift.yml` | Fails when a caller's vendored `.claude/hooks/cloud-env-check.mjs` has drifted from `tools/cloud-env-check.mjs` here. |
 
 ## Relationship to `bounded-systems/.github/required-baseline.yml`
 
@@ -127,6 +128,69 @@ until the next change. Cheap fix, per caller: add a `schedule:` cron to the call
 workflow so the repo rescans weekly. (A central scanning service was considered and
 rejected for now — see #1: it would add an availability dependency and a standing GitHub
 credential, against the zero-standing-grants property that justified this lane.)
+
+## Using `env-check-drift`
+
+Copy [`templates/env-check.yml`](templates/env-check.yml) to `.github/workflows/env-check.yml`
+in the adopting repo, and pin the full SHA. Same standardization argument as `deps.yml`.
+
+`cloud-env-check.mjs` reconciles the hand-configured claude.ai/code environment dialog
+against a repo's checked-in record of it, and `--verify-domains` **probes** the allowlist
+rather than trusting the digest. It is repo-agnostic: everything repo-specific lives in a
+`handshake` block in `.claude/cloud-environment.json`.
+
+```json
+"handshake": { "variable": "INFRA_ENV_CONFIG", "prefix": "INFRA_" }
+```
+
+**Adoption is four things, not the two the script's header claims** — the script, the
+config, an invocation from a SessionStart hook, and the variable in the dialog. Steps 3
+and 4 live outside both files, and without them nothing runs. This lane covers step 1 only.
+
+### Why it is vendored rather than published
+
+Tempting to put it on JSR next to `@bounded-systems/guest-room`. It is the wrong shape: a
+SessionStart hook runs **before dependencies are installed**, so importing it would fetch
+it over the network using the very allowlist it exists to validate. If the allowlist is
+broken the check cannot run, precisely when you need it. (Same reason the script imports
+nothing but node stdlib and shells out to `curl` — `curl` honours `HTTPS_PROXY` and the
+proxy CA bundle without the script knowing either exists.)
+
+So every adopter keeps a copy on disk, and the cost of that is drift. This lane makes the
+drift loud — the same trade `tools/deno-lock-cdx.py` already makes against its embedded
+twin, and the pattern infra's `proofs/check-sync.mjs` uses.
+
+### Why a digest, not a fetch
+
+A reusable workflow's steps run in the **caller's** checkout, so `tools/` is not on disk
+there and the canonical bytes cannot be diffed against directly. Fetching them would put a
+network dependency inside a check about network configuration — the same circularity the
+vendoring exists to avoid. The pin is `CANONICAL_SHA256` in `env-check-drift.yml`, and
+`test/check_env_check_digest.py` fails if it disagrees with `tools/cloud-env-check.mjs`, so
+a half-done bump reddens **this** repo before any caller.
+
+Like the scanner digest, it is **not a caller input**: a caller able to override it could
+declare its own drifted copy canonical and silently defeat the check.
+
+### Bumping the canonical script
+
+1. Edit `tools/cloud-env-check.mjs`
+2. Update `CANONICAL_SHA256` in `.github/workflows/env-check-drift.yml` (`sha256sum tools/cloud-env-check.mjs`)
+3. Merge — `self-test` proves the two agree
+4. Re-vendor into each adopting repo and bump its caller pin
+
+Steps 1–3 are one review. Step 4 is per-repo and is what the lane makes visible: a repo
+that skips it goes red on its next relevant PR instead of drifting unnoticed.
+
+**Two copies, currently in step.** `infra` and `front-desk-scheduler` both carry
+`c530b86a…`, byte-identical to canonical as of adoption — so this gate was introduced
+green and only ever fires on real future divergence.
+
+### What it does not do
+
+Open a PR to fix the drift. It fails, the same way `check_embed_sync.py` and
+`schema-drift.yml` do, and that has been enough. Nor does it fix the dialog — the dialog is
+UI-configured and outside any session's control.
 
 ## The scanner binary, and why it is pinned by digest
 

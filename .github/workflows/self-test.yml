@@ -37,6 +37,26 @@ jobs:
   scan:
     uses: ./.github/workflows/osv-scan.yml
 
+  # Exercises env-check-drift.yml end to end against this repo's own canonical file.
+  # ci-workflows has no .claude/hooks/ of its own, so `path` points at tools/ — the
+  # bytes are the same ones every caller is measured against, so a pass here means the
+  # workflow runs, finds the file, hashes it, and agrees with its own pin. A digest
+  # bumped in only one of the two places fails in `env-check-digest` below; a workflow
+  # that cannot run at all fails here.
+  env-check:
+    uses: ./.github/workflows/env-check-drift.yml
+    with:
+      path: tools/cloud-env-check.mjs
+
+  env-check-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: CANONICAL_SHA256 in env-check-drift.yml matches tools/cloud-env-check.mjs
+        run: python3 test/check_env_check_digest.py
+
   converter:
     runs-on: ubuntu-latest
     steps:
