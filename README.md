@@ -91,14 +91,35 @@ rather than quietly weakening the lane.
 Maven and the other ecosystems OSV-Scanner supports are all discovered without
 configuration.
 
-**`deno.lock` is not supported.** OSV-Scanner 2.4.0 ships no extractor for it; an explicit
-`--lockfile=deno.lock` fails with `could not determine extractor suitable to this file`.
-For a Deno-first repo, this workflow scans only whatever *other* manifests the repo
-carries — **a green check does not mean the JSR/npm graph was examined.** Since a good part
-of this org is Deno/JSR, that gap is a material limit on the rollout, not a footnote.
-Tracked in [infra#104](https://github.com/bounded-systems/infra/issues/104).
+**`deno.lock` has no osv-scanner extractor**, but the lane covers its npm subset anyway
+([#1](https://github.com/bounded-systems/ci-workflows/issues/1)): a v4/v5 lock already
+contains the fully-resolved npm graph, so a convert step re-encodes it as a CycloneDX SBOM
+(`tools/deno-lock-cdx.py`, embedded in the workflow) that the scan picks up by filename.
+Concretely, on `front-desk-scheduler` that turned 0 scanned deno.lock packages into 103.
+
+What a Deno-first repo's green check means, bucket by bucket — the scan log prints these
+counts per lock:
+
+| bucket | example | scanned? |
+|---|---|---|
+| npm-registry deps | `mysql2@3.13.0`, `@hono/node-server` | ✅ via the generated SBOM |
+| JSR deps via npm-compat (`@jsr/*`) | `@jsr/bounded-systems__verbspec` | ❌ served from `npm.jsr.io`, not npmjs — no OSV advisory can exist under that purl, so listing them would inflate the count without adding coverage |
+| JSR-native / remote deps | `jsr:@bounded-systems/verbspec` | ❌ OSV has no JSR ecosystem — nothing can scan these today |
+
+The converter is a **pure function**: no timestamp, no random serialNumber, sorted
+components, byte-identical output for identical input — enforced by golden tests
+(`test/`), a heredoc↔file drift check (`test/check_embed_sync.py`), and reproducible
+locally with `nix flake check`. Unsupported lock versions (v3 and older) produce a
+`::warning::` and are skipped, not a red X — they were previously scanned as nothing at
+all, and adoption should not force lock migrations.
 
 A repo with nothing scannable passes (`--allow-no-lockfiles`) rather than red-lining.
+
+**Scans run on PR/push only.** An advisory published *after* a lock merges goes unnoticed
+until the next change. Cheap fix, per caller: add a `schedule:` cron to the caller
+workflow so the repo rescans weekly. (A central scanning service was considered and
+rejected for now — see #1: it would add an availability dependency and a standing GitHub
+credential, against the zero-standing-grants property that justified this lane.)
 
 ## The scanner binary, and why it is pinned by digest
 

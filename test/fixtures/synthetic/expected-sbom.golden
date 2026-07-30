@@ -1,0 +1,42 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:npm/%40fixture-scope/fixture-scoped@4.5.6",
+      "name": "@fixture-scope/fixture-scoped",
+      "purl": "pkg:npm/%40fixture-scope/fixture-scoped@4.5.6",
+      "type": "library",
+      "version": "4.5.6"
+    },
+    {
+      "bom-ref": "pkg:npm/%40fixture-scope/pkg__with__underscores@0.1.0",
+      "name": "@fixture-scope/pkg__with__underscores",
+      "purl": "pkg:npm/%40fixture-scope/pkg__with__underscores@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
+      "bom-ref": "pkg:npm/fixture-dup@1.0.0",
+      "name": "fixture-dup",
+      "purl": "pkg:npm/fixture-dup@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:npm/fixture-plain@1.2.3",
+      "name": "fixture-plain",
+      "purl": "pkg:npm/fixture-plain@1.2.3",
+      "type": "library",
+      "version": "1.2.3"
+    },
+    {
+      "bom-ref": "pkg:npm/fixture-plain@2.0.0-rc.1",
+      "name": "fixture-plain",
+      "purl": "pkg:npm/fixture-plain@2.0.0-rc.1",
+      "type": "library",
+      "version": "2.0.0-rc.1"
+    }
+  ],
+  "specVersion": "1.5",
+  "version": 1
+}

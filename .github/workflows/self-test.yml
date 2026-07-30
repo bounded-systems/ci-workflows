@@ -1,13 +1,22 @@
 name: self-test
 
-# ci-workflows carries no lockfiles of its own, so this does not prove much about
-# vulnerability detection. It proves the two things that actually break in the field and
-# that would otherwise break for ~87 callers at once:
+# ci-workflows carries no real lockfiles of its own, so the scan job does not prove much
+# about vulnerability detection. It proves the things that actually break in the field
+# and that would otherwise break for ~87 callers at once:
 #
 #   1. the release URL still serves, and the pinned digest still matches
 #      (an upstream re-tag or a silently replaced asset fails here first, not downstream);
 #   2. the `--allow-no-lockfiles` path exits 0 rather than red-lining a repo with
-#      nothing scannable — the common case across this org.
+#      nothing scannable — the common case across this org;
+#   3. the deno.lock convert step runs end-to-end: the synthetic fixture lock under
+#      test/fixtures/ is found, converted, and its SBOM scanned. The fixture's package
+#      names are made up, so no real-world advisory can ever redden this lane for
+#      reasons unrelated to the lane itself.
+#
+# The converter job guards the converter the same way goldens guard any pure function:
+# byte-equality against fixtures, plus a drift check that the copy embedded in
+# osv-scan.yml is byte-identical to tools/deno-lock-cdx.py. `nix flake check` runs the
+# same two scripts locally — one test suite, two runners.
 #
 # The weekly schedule is the point: a digest drift discovered on a Monday cron is one
 # red check here, whereas the same drift discovered organically is every adopting repo
@@ -27,3 +36,14 @@ permissions:
 jobs:
   scan:
     uses: ./.github/workflows/osv-scan.yml
+
+  converter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Converter unit + golden tests (byte-equality)
+        run: python3 test/test_converter.py
+      - name: Embedded copy in osv-scan.yml matches tools/deno-lock-cdx.py
+        run: python3 test/check_embed_sync.py

@@ -1,0 +1,42 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@fixture-scope/fixture-native@1": "1.0.0",
+    "npm:@fixture-scope/fixture-scoped@4": "4.5.6",
+    "npm:fixture-plain@1": "1.2.3"
+  },
+  "jsr": {
+    "@fixture-scope/fixture-native@1.0.0": {
+      "integrity": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "npm": {
+    "@fixture-scope/fixture-scoped@4.5.6": {
+      "integrity": "sha512-fixture"
+    },
+    "@fixture-scope/pkg__with__underscores@0.1.0_fixture-peer@9.9.9": {
+      "integrity": "sha512-fixture"
+    },
+    "@jsr/fixture-scope__mirrored@1.0.0": {
+      "integrity": "sha512-fixture"
+    },
+    "fixture-dup@1.0.0_fixture-peer-a@1.0.0": {
+      "integrity": "sha512-fixture"
+    },
+    "fixture-dup@1.0.0_fixture-peer-b@2.0.0": {
+      "integrity": "sha512-fixture"
+    },
+    "fixture-plain@1.2.3": {
+      "integrity": "sha512-fixture"
+    },
+    "fixture-plain@2.0.0-rc.1_fixture-peer@9.9.9": {
+      "integrity": "sha512-fixture"
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@fixture-scope/fixture-native@1",
+      "npm:fixture-plain@1"
+    ]
+  }
+}
