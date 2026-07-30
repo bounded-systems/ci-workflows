@@ -45,7 +45,9 @@ jobs:
     name: osv-scan
     runs-on: ${{ inputs.runs-on }}
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      # Same pin as the org's .github/repo-standard.yml and required-baseline.yml, so
+      # there is one checkout SHA to bump across the org rather than two.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false

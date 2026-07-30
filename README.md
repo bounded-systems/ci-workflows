@@ -12,6 +12,33 @@ With ~87 public repos to serve, a shared workflow has to live somewhere public.
 |---|---|
 | `.github/workflows/osv-scan.yml` | Scans a repo's dependency lockfiles against the OSV database. Hard-fails on a known vulnerability. |
 
+## Relationship to `bounded-systems/.github/required-baseline.yml`
+
+`required-baseline.yml` in the org's `.github` repo describes itself as "the enforced
+security FLOOR for every repo … injected on every repo's PRs by an org ruleset (the
+`workflows` rule)". **It is not injected, and it has never run.** Verified 2026-07-30:
+
+- the only org rulesets reaching `front-desk-scheduler` are `default-branch-protection`
+  (rule types `deletion`, `non_fast_forward`, `pull_request`, `required_linear_history`,
+  `required_signatures`) and `protect important repos` (`repository_delete`,
+  `repository_transfer`). **Neither contains a `workflows` rule.**
+- `required-baseline` appears **zero times** in that repo's run history.
+
+The likely cause is the plan: ruleset-injected required workflows are a GitHub Enterprise
+feature and this org is on Free — the same class of limit that already blocked environment
+required-reviewers (`infra/github-admin/README.md`). That makes the injection mechanism
+unavailable rather than misconfigured.
+
+**That is why this repo exists as a per-repo caller rather than an org injection.** Until
+the plan changes, adoption has to be an explicit `uses:` in each repo. `required-baseline.yml`
+should be wired up, deleted, or clearly marked inert — as written it reads like a control
+protecting every repo, and it is not. Tracked in
+[infra#104](https://github.com/bounded-systems/infra/issues/104).
+
+The two also disagree on posture: `required-baseline` is deliberately report-only
+(`continue-on-error: true`); this workflow hard-fails. If the baseline is ever wired up,
+reconcile them rather than running both.
+
 ## Using `osv-scan`
 
 ```yaml
