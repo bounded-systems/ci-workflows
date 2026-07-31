@@ -45,9 +45,11 @@ name: deps
 # the lane warns on every run that the grace is unbounded — because unbounded grace is
 # the required-baseline.yml failure (infra#135), a control that reads green while
 # gating nothing. Not hypothetical: grace masked a CVSS 8.8 on `site` this way.
-# The line is COMMENTED OUT below rather than shipped, because the input does not exist
-# at the SHA this template currently pins. Uncomment it only together with a re-pin
-# past the commit that added it, or the caller fails with an unknown-input error.
+# The pin above now carries the input, so uncommenting the line below is all it takes.
+# It stays commented HERE because this file is copied byte-identical into every adopter
+# and a shared template cannot carry a date that is right for all of them — an
+# unreplaced placeholder would be malformed, and malformed fails closed. Set the date in
+# the adopting repo, not here.
 #
 # Grace downgrades VULNERABILITY findings only. A tool or network failure still fails
 # hard in every mode — a lane that cannot run must never report green.
@@ -82,7 +84,7 @@ jobs:
   osv:
     # SHA-pinned per org policy. `# main` records what the SHA was at the time, so a
     # reviewer can tell an intentional bump from a drifted one.
-    uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@62990dd15f1b0deba21e597bebd1512970544c15 # main
+    uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@162accbbcfdfd12c146c44f23770e6a6bb9abb1c # main
     with:
       report-only: true # adoption grace — delete this once findings are clear (ci-workflows#2)
       # grace-expires: "YYYY-MM-DD" # date the grace; needs a re-pin past the commit adding it
