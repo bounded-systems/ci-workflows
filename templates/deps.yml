@@ -7,11 +7,14 @@ name: deps
 # workflow (one definition), and a fleet of identical callers means the next bump is
 # one review of one diff, applied everywhere by the same sed.
 #
-# "BYTE-IDENTICAL" MEANS AT ADOPTION, AND HAS EXACTLY ONE SANCTIONED DIVERGENCE:
-# the `report-only: true` line below, which each repo deletes once its findings are
-# clear (see the grace note further down). A mature adopter therefore differs from
-# this file by that one line — that is the intended end state, not drift. Any OTHER
-# difference is drift, including a stale pin.
+# "BYTE-IDENTICAL" NOW MEANS BYTE-IDENTICAL. It previously carried one sanctioned
+# divergence — the `report-only: true` grace line each repo deleted once its findings
+# cleared — but the template no longer ships that line, so an adopter and this file
+# should match exactly. Any difference is drift, including a stale pin.
+#
+# The one legitimate exception is a repo that genuinely could not clear a finding
+# during adoption and therefore carries a DATED grace block (see the posture note
+# below). That is a deliberate, reviewable, self-expiring divergence — not drift.
 #
 # Unlike the canonical script, nothing gates this: templates/ has no drift lane
 # against its callers, so a caller left behind is invisible until someone diffs it.
@@ -30,29 +33,36 @@ name: deps
 # (OSV has no JSR ecosystem). A repo with nothing scannable passes rather than
 # red-lining.
 #
-# Failure posture is HARD-FAIL by default. This template ships `report-only: true`
-# as an ADOPTION GRACE setting: 5 of the first 8 repos scanned carried pre-existing
-# advisories, and blocking adoption on remediation would mean most repos stay
-# UNINSTRUMENTED while their findings go unseen. Grace decouples "we can see it"
-# from "we have fixed it".
+# Failure posture is HARD-FAIL, and this template now ships it that way — no `with:`
+# block at all. Adopt as-is and the check is honest from its first run: green means
+# genuinely clean.
 #
-# >>> DELETE THE `report-only: true` LINE BELOW once this repo's findings are clear.
-# >>> That flips it to hard-fail, which is the intended steady state.
-# Progress tracked in ci-workflows#2.
+# THIS REVERSES THE EARLIER DEFAULT, on evidence. The template used to ship
+# `report-only: true` because 5 of the first 8 repos scanned carried pre-existing
+# advisories, so blocking adoption on remediation looked like it would leave most
+# repos uninstrumented. That rate did not hold — waves 3–6 were almost entirely
+# clean, six repos in total rather than forty (ci-workflows#8). Shipping grace to
+# everyone to spare the few cost more than it saved: 30 repos later needed a
+# second sweep to take the flag back off, and while it was on it masked a CVSS 8.8
+# on `site` behind a green check.
 #
-# IF GRACE WILL OUTLIVE THE ADOPTION PR, DATE IT. The lane takes an optional
-# `grace-expires: "YYYY-MM-DD"`; from that date findings fail hard again. Without one
-# the lane warns on every run that the grace is unbounded — because unbounded grace is
-# the required-baseline.yml failure (infra#135), a control that reads green while
-# gating nothing. Not hypothetical: grace masked a CVSS 8.8 on `site` this way.
-# The pin above now carries the input, so uncommenting the line below is all it takes.
-# It stays commented HERE because this file is copied byte-identical into every adopter
-# and a shared template cannot carry a date that is right for all of them — an
-# unreplaced placeholder would be malformed, and malformed fails closed. Set the date in
-# the adopting repo, not here.
+# IF ADOPTION IS BLOCKED BY A PRE-EXISTING FINDING, work REMEDIATION.md first —
+# start at rung 1, stop at the first rung that works. Most reds clear with a relock.
+# Only if the finding cannot be cleared in the adoption PR, add grace, AND DATE IT:
+#
+#     with:
+#       report-only: true
+#       grace-expires: "YYYY-MM-DD"   # a real date, not a placeholder
+#
+# From that date findings fail hard again. Omit the date and the lane warns on every
+# run that the grace is unbounded — because unbounded grace is the
+# required-baseline.yml failure (infra#135), a control that reads green while gating
+# nothing. A malformed date fails CLOSED; a typo must not be the permissive setting.
 #
 # Grace downgrades VULNERABILITY findings only. A tool or network failure still fails
 # hard in every mode — a lane that cannot run must never report green.
+#
+# Progress tracked in ci-workflows#2.
 #
 # The reviewable escape hatch for an accepted or unfixable finding is an
 # osv-scanner.toml [[IgnoredVulns]] entry next to the lockfile, with a written reason
@@ -85,6 +95,3 @@ jobs:
     # SHA-pinned per org policy. `# main` records what the SHA was at the time, so a
     # reviewer can tell an intentional bump from a drifted one.
     uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@162accbbcfdfd12c146c44f23770e6a6bb9abb1c # main
-    with:
-      report-only: true # adoption grace — delete this once findings are clear (ci-workflows#2)
-      # grace-expires: "YYYY-MM-DD" # uncomment and set a real date; the pin above supports it
