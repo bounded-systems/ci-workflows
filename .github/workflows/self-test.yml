@@ -57,6 +57,21 @@ jobs:
       - name: CANONICAL_SHA256 in env-check-drift.yml matches tools/cloud-env-check.mjs
         run: python3 test/check_env_check_digest.py
 
+  # env-record.yml cannot be exercised the way env-check-drift is above: it needs a
+  # caller's .claude/cloud-environment.json and ci-workflows has none of its own. So the
+  # step is extracted and run against synthesized records instead — including the
+  # stale-digest case, which is the only one that proves the lane can fail at all. A
+  # version of this gate that passed unconditionally would look identical in CI to one
+  # that works, which is the hollow green the lane exists to remove.
+  env-record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: env-record accepts consistent records and rejects stale ones
+        run: python3 test/test_env_record.py
+
   # Resolves the SHAs in templates/ against real commits. The COMPLEMENT of
   # check_template_pins.py, not a duplicate — see that script's header for the split.
   # Shape is checkable offline and runs in both runners; resolution needs git history,

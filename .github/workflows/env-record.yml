@@ -1,0 +1,119 @@
+name: env-record
+
+# Fails when a caller's .claude/cloud-environment.json records a handshake digest that
+# does not match its own contents.
+#
+# WHAT THIS GATES, AND WHY IT IS NOT env-check-drift.yml:
+# env-check-drift asks "is the vendored SCRIPT the canonical one". This asks "is the
+# RECORD internally honest". Different failure, different file, no overlap. A repo can
+# pass one and fail the other.
+#
+# THE GAP IT CLOSES:
+# cloud-env-check.mjs hashes the config's domains + env vars into a 12-hex digest, and
+# the file also records that digest under environmentVariables so the value can be
+# copy-pasted into the claude.ai/code dialog. Nothing kept the two in step. The script
+# says so itself:
+#
+#   "The file records the handshake variable's value for the copy-paste flow above; it
+#    is excluded from the hash, so keep it honest BY HAND."
+#
+# By hand is the problem. Editing the domain list moves the digest, and a stale recorded
+# value is then a checked-in instruction to type the WRONG thing into the dialog — which
+# reads as a mismatch warning at every future SessionStart, in a repo where the file is
+# supposed to be the answer. Adding a domain and forgetting the digest is a one-keystroke
+# mistake with a fleet-shaped consequence.
+#
+# The script's own boot check does notice this, but only as a WARNING, and only for
+# whoever happens to start a session. That is the same "a human might see it" posture
+# that let required-baseline.yml sit inert (infra#135) and let adoption grace mask a
+# CVSS 8.8 (#8). This makes the record self-verifying instead.
+#
+# WHY THE DIGEST IS RECOMPUTED RATHER THAN PINNED HERE:
+# Unlike the scanner version and CANONICAL_SHA256, there is nothing to pin — the correct
+# digest is a pure function of the caller's own config, and it legitimately differs per
+# repo and changes on every intentional edit. So this runs the caller's vendored script
+# with --print-digest and compares. Pairing it with env-check-drift is what makes that
+# safe: drift guarantees the script computing the digest is the canonical one.
+#
+# NO NETWORK. --print-digest reads a file and hashes it; --verify-domains (which does
+# probe) is deliberately NOT run here. Probing the allowlist from a GitHub runner would
+# measure the runner's egress, not the cloud session's, and would fail for reasons that
+# have nothing to do with the record.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Runner label for the record job.
+        type: string
+        default: ubuntu-latest
+      config:
+        description: Path to the checked-in environment record, relative to the repo root.
+        type: string
+        default: .claude/cloud-environment.json
+      script:
+        description: >-
+          Path to the vendored cloud-env-check.mjs. Pair this lane with env-check-drift so
+          the script computing the digest is known to be the canonical one.
+        type: string
+        default: .claude/hooks/cloud-env-check.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: env-record
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      # Same pin as the org's other lanes, so there is one checkout SHA to bump.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Recorded handshake digest matches the record's contents
+        env:
+          CONFIG: ${{ inputs.config }}
+          SCRIPT: ${{ inputs.script }}
+        run: |
+          set -euo pipefail
+
+          test -f "$CONFIG" || { echo "::error::$CONFIG not found"; exit 1; }
+          test -f "$SCRIPT" || { echo "::error::$SCRIPT not found"; exit 1; }
+
+          # --print-digest exits non-zero on a structurally invalid record (a typo'd
+          # allowedDomains key hashing zero domains, for instance), so that failure
+          # propagates here rather than being compared as an empty string.
+          expected="$(node "$SCRIPT" --config "$CONFIG" --print-digest)"
+
+          # Two separate node calls rather than one parsed line: no heredoc, no field
+          # splitting, nothing that changes meaning if a value ever contains whitespace.
+          var="$(node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).handshake?.variable ?? ""))' "$CONFIG")"
+          recorded="$(node -e 'const c=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(c.environmentVariables?.[c.handshake?.variable] ?? ""))' "$CONFIG")"
+
+          if [ -z "$var" ]; then
+            echo "::error::$CONFIG has no handshake.variable, so there is no digest to"\
+                 "verify. Add a handshake block, or drop this lane."
+            exit 1
+          fi
+
+          # Absent is a failure, not a pass. A repo adopting this lane is declaring its
+          # record complete; leaving the value out would otherwise be the one way to make
+          # the check unfailable, which is the shape this lane exists to remove.
+          if [ -z "$recorded" ]; then
+            echo "::error::$CONFIG does not record $var under environmentVariables, so the"\
+                 "value to type into the dialog is not written down anywhere. Add"\
+                 "\"$var\": \"$expected\"."
+            exit 1
+          fi
+
+          if [ "$recorded" != "$expected" ]; then
+            echo "::error::$CONFIG records $var=$recorded but its contents digest to"\
+                 "$expected. The file is telling the next person to configure the dialog"\
+                 "with a stale value. Update the recorded digest to $expected — and"\
+                 "remember the dialog itself needs the new value too, where env vars"\
+                 "freeze at session start and reach only NEW sessions."
+            exit 1
+          fi
+
+          echo "$var=$expected ✓ (record is internally consistent)"
