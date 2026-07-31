@@ -87,4 +87,4 @@ jobs:
     uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@162accbbcfdfd12c146c44f23770e6a6bb9abb1c # main
     with:
       report-only: true # adoption grace — delete this once findings are clear (ci-workflows#2)
-      # grace-expires: "YYYY-MM-DD" # date the grace; needs a re-pin past the commit adding it
+      # grace-expires: "YYYY-MM-DD" # uncomment and set a real date; the pin above supports it
