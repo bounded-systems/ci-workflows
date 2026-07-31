@@ -64,6 +64,52 @@ it rather than committing churn.
 
 ---
 
+## After any relock: check *what* left the lockfile
+
+Applies to every rung that regenerates a lock, not just rung 1.
+
+A relock that makes the lane go green by **removing packages from the lockfile** has fixed
+nothing. The scanner reads the lock; a package that is no longer in it cannot be reported.
+That is a false green, and it looks exactly like a real one.
+
+Count the entries before and after:
+
+```sh
+cp package-lock.json /tmp/lock.bak      # or deno.lock / Cargo.lock
+# ...relock...
+node -e 'const f=p=>Object.keys(JSON.parse(require("fs").readFileSync(p,"utf8")).packages||{});
+         const a=f("/tmp/lock.bak"), b=f("package-lock.json");
+         console.log("before",a.length,"after",b.length);
+         console.log("GONE:", a.filter(x=>!b.includes(x)).join("\n  "))'
+```
+
+**But a shrink is not automatically wrong** — the count alone cannot tell you. Both of
+these happened in the same wave:
+
+| repo | change | verdict |
+|---|---|---|
+| `fold-engine` | 52 → 7 npm entries | **false green** — the whole lume subtree vanished, taking `markdown-it` and `linkify-it` (CVSS 8.7) out of view |
+| `fold-engine` (correct regen) | 52 → 46 | fine — a stale `nunjucks` subtree nothing imports, plus a duplicate `zod` collapsing |
+| `lima-devshell` | 106 → 97 | fine — cfg-gated Windows/wasi crates dropped when `windows-sys` collapsed to one version |
+
+So the rule is: **read the list of what left, not the number.** If a package that was
+carrying an advisory disappeared, you have hidden a finding. If what left is duplicate
+versions collapsing or a subtree nothing imports, you are fine.
+
+The strongest single signal: **a still-reported finding is proof the scan did not go quiet
+by omission.** On the correct `fold-engine` regen, `markdown-it` stayed present and stayed
+red — which is what made the other seven fixes believable.
+
+**Deno specifically:** `deno install` resolves only the `imports` map, so it silently drops
+everything reachable through remote URL imports. Regenerate through the real entrypoints
+instead:
+
+```sh
+rm deno.lock && deno cache src/main.ts src/cli.ts   # every entrypoint the tasks use
+```
+
+---
+
 ## Rung 2 — bump the direct parent
 
 When the vulnerable package is transitive and a newer parent admits the fix.
