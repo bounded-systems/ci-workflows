@@ -12,6 +12,11 @@ With ~87 public repos to serve, a shared workflow has to live somewhere public.
 |---|---|
 | `.github/workflows/osv-scan.yml` | Scans a repo's dependency lockfiles against the OSV database. Hard-fails on a known vulnerability. |
 | `.github/workflows/env-check-drift.yml` | Fails when a caller's vendored `.claude/hooks/cloud-env-check.mjs` has drifted from `tools/cloud-env-check.mjs` here. |
+| `.github/workflows/env-record.yml` | Fails when a caller's `.claude/cloud-environment.json` records a handshake digest that disagrees with its own contents. |
+
+`env-check-drift` and `env-record` are complements, not alternatives: one asks whether the
+**script** is canonical, the other whether the **record** is internally honest. A repo can
+pass either and fail the other.
 
 **Got a red `osv` check? → [REMEDIATION.md](./REMEDIATION.md).** A four-rung ladder —
 relock, bump the parent, override, accept with an expiry — ordered by how much opinion

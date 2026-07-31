@@ -46,6 +46,22 @@
           touch $out
         '';
 
+        # Mirrors self-test's `env-record` job — a third lane again: a red here means
+        # env-record would misjudge every adopting repo's checked-in record.
+        #
+        # THE ONE DERIVATION THAT IS NOT PYTHON-ONLY, deliberately. The lane under test
+        # runs the caller's vendored cloud-env-check.mjs to recompute a digest, so a
+        # test that stubbed node would be checking a reimplementation of the thing that
+        # matters instead of the thing itself — the same mistake test_scan_posture.py
+        # documents about failing to reproduce `bash -e`. What is load-bearing above is
+        # the PARITY rule, not the language: this runs in both runners, which is what
+        # makes a local result trustworthy.
+        env-record = pkgs.runCommand "env-record" { } ''
+          cd ${self}
+          PATH=${pkgs.nodejs}/bin:$PATH ${pkgs.python3}/bin/python3 test/test_env_record.py
+          touch $out
+        '';
+
         # Mirrors the SHAPE half of self-test's `template-pins` job. The other half of
         # that job — resolving each SHA with `git cat-file -e` — deliberately has no
         # entry here and cannot have one: this derivation is a store path with no .git
