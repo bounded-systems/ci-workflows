@@ -15,6 +15,7 @@
 # The property that must hold in every mode: report-only downgrades VULNERABILITY
 # findings (exit 1) and nothing else. A tool/network failure (any other non-zero) fails
 # hard even under grace — a lane that cannot run must never report green.
+import datetime
 import pathlib
 import re
 import subprocess
@@ -44,7 +45,7 @@ def extract_scan_step():
 
 
 class ScanPosture(unittest.TestCase):
-    def run_step(self, scanner_exit, report_only):
+    def run_step(self, scanner_exit, report_only, grace_expires=""):
         with tempfile.TemporaryDirectory() as td:
             td = pathlib.Path(td)
             stub = td / "osv-scanner"
@@ -56,7 +57,11 @@ class ScanPosture(unittest.TestCase):
                 # -e exactly as GitHub does it. This is the point of the test.
                 ["bash", "-e", str(script)],
                 capture_output=True, text=True,
-                env={"PATH": f"{td}:/usr/bin:/bin", "REPORT_ONLY": report_only},
+                env={
+                    "PATH": f"{td}:/usr/bin:/bin",
+                    "REPORT_ONLY": report_only,
+                    "GRACE_EXPIRES": grace_expires,
+                },
             )
 
     def test_clean_passes_in_both_modes(self):
@@ -86,6 +91,77 @@ class ScanPosture(unittest.TestCase):
     def test_step_actually_clears_errexit(self):
         # Guards the fix directly, so the intent survives a future refactor of the body.
         self.assertRegex(extract_scan_step(), r"(?m)^\s*set \+e\s*$")
+
+
+class GraceExpiry(unittest.TestCase):
+    """Adoption grace must be able to END.
+
+    Unbounded grace is the `required-baseline.yml` failure shape (infra#135): a control
+    that reads green while gating nothing. It masked a CVSS 8.8 on `site` for exactly
+    that reason, which is why the expiry fails CLOSED in every ambiguous case.
+
+    Dates are computed relative to today rather than hardcoded — a fixed date would turn
+    these into tests that silently invert once it passes, which is the same class of rot
+    they exist to prevent.
+    """
+
+    run_step = ScanPosture.run_step
+
+    @staticmethod
+    def _offset(days):
+        return (
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)
+        ).strftime("%Y-%m-%d")
+
+    def test_future_expiry_still_grants_grace(self):
+        r = self.run_step(1, "true", self._offset(30))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("::warning::", r.stdout)
+        self.assertIn(self._offset(30), r.stdout)
+
+    def test_expiry_today_still_grants_grace(self):
+        # Boundary: grace lasts THROUGH its final day, so an expiry set for today is a
+        # warning and not yet a failure. Off-by-one here would fail repos a day early.
+        r = self.run_step(1, "true", self._offset(0))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("::warning::", r.stdout)
+
+    def test_past_expiry_fails_hard(self):
+        r = self.run_step(1, "true", self._offset(-1))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("::error::", r.stdout)
+        self.assertIn("EXPIRED", r.stdout)
+
+    def test_absent_expiry_warns_that_grace_is_unbounded(self):
+        # Still exit 0 — adoption must never be blocked by the absence of a date — but
+        # the run says so every time rather than looking like ordinary grace.
+        r = self.run_step(1, "true", "")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("NO EXPIRY", r.stdout)
+
+    def test_malformed_expiry_fails_closed(self):
+        # A typo must not be the most permissive setting available.
+        for bad in ("soon", "2026-13-01x", "31-10-2026", "2026/10/31", "2026-1-1"):
+            with self.subTest(grace_expires=bad):
+                r = self.run_step(1, "true", bad)
+                self.assertEqual(r.returncode, 1, f"{bad!r} granted grace: {r.stdout}")
+                self.assertIn("::error::", r.stdout)
+
+    def test_expiry_never_rescues_a_broken_scanner(self):
+        # The security-critical interaction: a tool/network failure fails hard even with
+        # grace live and unexpired. Grace downgrades findings, never a lane that could
+        # not run.
+        for code in (2, 127):
+            with self.subTest(scanner_exit=code):
+                r = self.run_step(code, "true", self._offset(30))
+                self.assertEqual(r.returncode, code)
+                self.assertIn("::error::", r.stdout)
+
+    def test_expiry_is_inert_without_report_only(self):
+        # Hard-fail posture ignores the date entirely — a stale grace-expires left behind
+        # on a cleaned-up repo must not change behaviour in either direction.
+        self.assertEqual(self.run_step(1, "false", self._offset(-1)).returncode, 1)
+        self.assertEqual(self.run_step(0, "false", self._offset(-1)).returncode, 0)
 
 
 if __name__ == "__main__":

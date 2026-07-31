@@ -46,6 +46,16 @@ on:
           Tool and network failures still fail hard regardless — see the scan step.
         type: boolean
         default: false
+      grace-expires:
+        description: >-
+          Date (YYYY-MM-DD) on which `report-only` grace stops applying. From this date
+          findings fail hard again, exactly as if grace were absent. Omit and the grace is
+          unbounded — allowed, so adoption is never blocked, but the lane warns on every
+          run. A malformed value fails CLOSED: a typo must not buy unlimited grace.
+          Mirrors osv-scanner's own `ignoreUntil`, so both temporal escape hatches expire
+          the same way. Has no effect unless `report-only` is true. See REMEDIATION.md.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -268,6 +278,7 @@ jobs:
         working-directory: ${{ inputs.scan-path }}
         env:
           REPORT_ONLY: ${{ inputs.report-only }}
+          GRACE_EXPIRES: ${{ inputs.grace-expires }}
         run: |
           set -uo pipefail
           # `set +e` is LOAD-BEARING, not redundant. GitHub invokes run steps as
@@ -290,7 +301,9 @@ jobs:
           # Escape hatch for an accepted or unfixable finding: commit an `osv-scanner.toml`
           # next to the lockfile with an [[IgnoredVulns]] entry. It is picked up
           # automatically, is reviewed like any other diff, and leaves a written reason in
-          # the tree instead of a silently weakened lane.
+          # the tree instead of a silently weakened lane. Give it an `ignoreUntil` —
+          # osv-scanner expires the entry itself and the finding returns (verified against
+          # 2.4.0: past date => "unused ignores" and exit 1). REMEDIATION.md, rung 4.
           osv-scanner scan source -r --allow-no-lockfiles .
           rc=$?
           set -e
@@ -298,9 +311,43 @@ jobs:
             exit 0
           elif [ "$rc" -eq 1 ]; then
             if [ "${REPORT_ONLY}" = "true" ]; then
+              # Grace is ADOPTION grace and must be able to end. Unbounded grace is the
+              # `required-baseline.yml` failure — a control that reads green while gating
+              # nothing (infra#135). It masked a CVSS 8.8 on `site` for exactly this
+              # reason. So an expiry is honoured here the same way osv-scanner honours
+              # `ignoreUntil`: past the date, the finding fails hard again.
+              today="$(date -u +%Y-%m-%d)"
+              if [ -z "${GRACE_EXPIRES}" ]; then
+                echo "::warning::Known vulnerabilities found, downgraded by report-only"\
+                     "adoption grace with NO EXPIRY. The check is not failing and nothing"\
+                     "will ever make it fail. Set 'grace-expires: YYYY-MM-DD', or clear the"\
+                     "findings and drop 'report-only'. See REMEDIATION.md."
+                exit 0
+              fi
+              # Fail CLOSED on a malformed date. Treating an unparseable value as "no
+              # expiry" would make a typo the most permissive setting available, which is
+              # precisely backwards.
+              case "${GRACE_EXPIRES}" in
+                [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]) ;;
+                *)
+                  echo "::error::grace-expires is '${GRACE_EXPIRES}', which is not"\
+                       "YYYY-MM-DD. Failing closed rather than granting grace on an"\
+                       "unparseable date."
+                  exit 1
+                  ;;
+              esac
+              # Lexicographic compare is exact for zero-padded ISO-8601, and needs no
+              # date parsing. Equal dates still hold: grace lasts through its final day.
+              if [[ "${GRACE_EXPIRES}" < "${today}" ]]; then
+                echo "::error::report-only grace EXPIRED on ${GRACE_EXPIRES} (today is"\
+                     "${today}). Findings now fail hard, as intended. Clear them per"\
+                     "REMEDIATION.md, or move the date deliberately and say why."
+                exit 1
+              fi
               echo "::warning::Known vulnerabilities found. This repo runs the scan lane in"\
-                   "report-only adoption grace, so the check is NOT failing. See the table"\
-                   "above, fix them, then drop 'report-only: true' from .github/workflows/deps.yml."
+                   "report-only adoption grace until ${GRACE_EXPIRES}, so the check is NOT"\
+                   "failing. See the table above, fix them per REMEDIATION.md, then drop"\
+                   "'report-only' from .github/workflows/deps.yml."
               exit 0
             fi
             exit 1

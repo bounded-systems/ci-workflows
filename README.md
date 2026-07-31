@@ -13,6 +13,12 @@ With ~87 public repos to serve, a shared workflow has to live somewhere public.
 | `.github/workflows/osv-scan.yml` | Scans a repo's dependency lockfiles against the OSV database. Hard-fails on a known vulnerability. |
 | `.github/workflows/env-check-drift.yml` | Fails when a caller's vendored `.claude/hooks/cloud-env-check.mjs` has drifted from `tools/cloud-env-check.mjs` here. |
 
+**Got a red `osv` check? → [REMEDIATION.md](./REMEDIATION.md).** A four-rung ladder —
+relock, bump the parent, override, accept with an expiry — ordered by how much opinion
+each embeds in the tree. It exists because ~45 repos were cleared ad hoc during the
+2026-07-30 rollout and the inconsistency was itself a defect: two repos stalled as
+"needs a decision" when rung 3 answered them, and adoption grace masked a CVSS 8.8.
+
 ## Relationship to `bounded-systems/.github/required-baseline.yml`
 
 `required-baseline.yml` in the org's `.github` repo describes itself as "the enforced

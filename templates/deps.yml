@@ -40,11 +40,23 @@ name: deps
 # >>> That flips it to hard-fail, which is the intended steady state.
 # Progress tracked in ci-workflows#2.
 #
+# IF GRACE WILL OUTLIVE THE ADOPTION PR, DATE IT. The lane takes an optional
+# `grace-expires: "YYYY-MM-DD"`; from that date findings fail hard again. Without one
+# the lane warns on every run that the grace is unbounded — because unbounded grace is
+# the required-baseline.yml failure (infra#135), a control that reads green while
+# gating nothing. Not hypothetical: grace masked a CVSS 8.8 on `site` this way.
+# The line is COMMENTED OUT below rather than shipped, because the input does not exist
+# at the SHA this template currently pins. Uncomment it only together with a re-pin
+# past the commit that added it, or the caller fails with an unknown-input error.
+#
 # Grace downgrades VULNERABILITY findings only. A tool or network failure still fails
 # hard in every mode — a lane that cannot run must never report green.
 #
 # The reviewable escape hatch for an accepted or unfixable finding is an
-# osv-scanner.toml [[IgnoredVulns]] entry next to the lockfile, with a written reason.
+# osv-scanner.toml [[IgnoredVulns]] entry next to the lockfile, with a written reason
+# AND an `ignoreUntil` date — osv-scanner expires the entry itself and the finding
+# returns. Full triage order in REMEDIATION.md: start at rung 1, stop at the first
+# rung that works, and do not skip to an acceptance.
 #
 # The weekly rescan exists because advisories are published against locks that are
 # not changing: a repo that merges rarely would otherwise stay green on stale
@@ -73,3 +85,4 @@ jobs:
     uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@62990dd15f1b0deba21e597bebd1512970544c15 # main
     with:
       report-only: true # adoption grace — delete this once findings are clear (ci-workflows#2)
+      # grace-expires: "YYYY-MM-DD" # date the grace; needs a re-pin past the commit adding it
