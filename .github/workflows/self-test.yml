@@ -150,3 +150,10 @@ jobs:
       # plain `bash` passed anyway. This is that gap, closed.
       - name: Scan posture — exit-code triage under bash -e
         run: python3 test/test_scan_posture.py
+      # The pure half of the caller-pin reconciler: extraction and classification.
+      # The census itself needs the network and the org, so it lives in
+      # caller-pins.yml — but the rule that a stale pin is a VALID commit, and that
+      # "cannot tell" must never be reported as "behind", is testable offline and is
+      # the part worth pinning.
+      - name: Caller-pin extraction and classification
+        run: python3 test/test_caller_pins.py

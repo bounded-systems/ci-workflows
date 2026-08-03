@@ -1,0 +1,101 @@
+name: caller-pins
+# Which adopting repos are running a STALE copy of the shared osv-scan lane?
+#
+# WHY A SEPARATE LANE AND NOT A self-test JOB
+# -------------------------------------------
+# self-test measures THIS repo: the converter, the digests, the template pins. It
+# is a pull_request check, and it must stay one — it gates merges here. This lane
+# measures OTHER repos, so it cannot be a merge gate (a laggard elsewhere is not a
+# reason to block a PR here) and it needs the network to reach the whole org. Same
+# reasoning that keeps `env-check-drift` reusable and separate.
+#
+# WHAT IT CATCHES THAT NOTHING ELSE DOES
+# --------------------------------------
+# `uses: ...@<sha>` resolves the reusable workflow AT THAT COMMIT, so a caller's
+# pin decides which scanner that repo actually runs. self-test's `template-pins`
+# job already proves every pin in templates/ names a REAL commit — but a stale pin
+# is a real commit. `62990dd` resolves perfectly; it is just old. Existence and
+# currency are different questions, and only the second one catches the failure
+# that has now happened twice, in both directions (ci-workflows#10).
+#
+# ORDERING — Monday, after self-test, before the fleet rescans on Tuesday.
+# self-test runs 06:17 Mon and is the canary for a broken digest or release URL.
+# This runs after it, so a fleet-wide scanner problem is known before this lane
+# reports on who is pinned to what. The adopters then rescan 07:23 Tue. The whole
+# week reads: prove the lane works → measure who is running it → let them run it.
+#
+# REPORT-ONLY, DELIBERATELY, FOR NOW
+# ----------------------------------
+# Opening a re-pin PR per laggard needs contents:write + pull_requests:write
+# across the org. In this org that is a new PINNED entry in the broker's GH_APPS
+# map — the `bounded-systems-front-desk` App is already installed on all repos and
+# `front-desk-pin` is the existing precedent at exactly those permissions, pinned
+# by workflowRef. That is a wrangler.jsonc change through the reviewer-gated
+# broker-deploy lane, so it lands separately from the measurement. Note the
+# broker REFUSES contents:write on an unpinned entry (unsafePrivilegedApp), which
+# is why the entry must name this file's ref explicitly.
+#
+# Until then this runs UNAUTHENTICATED, which means public repos only. Private
+# repos are counted and reported as unexamined rather than silently dropped — an
+# unauthenticated census that quietly skipped them would be its own hollow green.
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      fail-on-lag:
+        description: >-
+          Fail the run when any caller lags the template. Default false while the
+          fleet is knowingly behind (ci-workflows#10) — a lane that is red every
+          week for a known reason teaches people to ignore it, which is the
+          required-baseline.yml failure one lane over. Flip to true once the bulk
+          re-pin lands, so it becomes a ratchet.
+        required: false
+        default: "false"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: caller-pins
+  cancel-in-progress: false
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          # Ancestry is the whole check — `git merge-base --is-ancestor` needs the
+          # history that contains both the caller's pin and the template's. Under
+          # a shallow checkout every comparison degrades to `unknown`, which the
+          # tool reports honestly rather than guessing, so a missing fetch-depth
+          # here would produce a census of shrugs rather than a wrong answer.
+          fetch-depth: 0
+
+      - name: Caller pin census
+        id: census
+        env:
+          # Deliberately NOT github.token: an installation token scoped to this
+          # repo lists only this repo, so authenticating with it would silently
+          # shrink the census to one row. Unauthenticated reads see every public
+          # repo, which is the honest maximum until the broker entry exists.
+          FAIL_ON_LAG: ${{ inputs.fail-on-lag || 'false' }}
+        run: |
+          set -euo pipefail
+          args=()
+          [ "${FAIL_ON_LAG}" = "true" ] && args+=(--fail-on-lag)
+          python3 tools/caller-pins.py "${args[@]}" | tee census.txt
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "## osv-scan caller pins"
+            echo
+            echo '```'
+            cat census.txt || echo "(census did not produce output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -193,6 +193,27 @@ declare its own drifted copy canonical and silently defeat the check.
 Steps 1–3 are one review. Step 4 is per-repo and is what the lane makes visible: a repo
 that skips it goes red on its next relevant PR instead of drifting unnoticed.
 
+### Bumping the shared osv-scan lane
+
+The same shape, with one step that exists because skipping it is what
+[#10](https://github.com/bounded-systems/ci-workflows/issues/10) is about:
+
+1. Edit `.github/workflows/osv-scan.yml`
+2. Merge, and re-pin `templates/deps.yml` to the merge commit
+3. **Re-pin every caller** — dispatch `caller-pins.yml` to get the list
+
+Step 3 is not bookkeeping. `uses: …@<sha>` resolves the reusable workflow *at that
+commit*, so a caller's pin decides which scanner that repo actually runs: a lane
+improvement that stops at step 2 is merged and deployed to nobody. And unlike the
+canonical-script gate above, **nothing makes a stale caller go red on its own** — it
+keeps scanning happily under the old rules — which is why this one has to be run rather
+than waited for.
+
+`caller-pins.yml` compares by **ancestry** (`git merge-base --is-ancestor`), not
+existence. `self-test`'s `template-pins` job already proves pins name real commits, and
+that is a different question: a stale pin *is* a real commit. `62990dd` resolves
+perfectly and is four commits behind.
+
 **Two copies, currently in step.** `infra` and `front-desk-scheduler` both carry
 `c530b86a…`, byte-identical to canonical as of adoption — so this gate was introduced
 green and only ever fires on real future divergence.

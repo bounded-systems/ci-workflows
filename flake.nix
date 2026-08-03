@@ -78,6 +78,18 @@
           ${pkgs.python3}/bin/python3 test/check_template_pins.py
           touch $out
         '';
+
+        # The same split as template-pins, one lane over. The caller-pin
+        # reconciler's extraction and classification are pure and run here; the
+        # census needs the network and the org, so it runs only in
+        # caller-pins.yml. The offline half carries the load-bearing rule — a
+        # stale pin is a VALID commit, so "resolves" and "current" are different
+        # questions, and "cannot tell" must never be reported as "behind".
+        caller-pins = pkgs.runCommand "caller-pins" { } ''
+          cd ${self}
+          ${pkgs.python3}/bin/python3 test/test_caller_pins.py
+          touch $out
+        '';
       });
 
       devShells = forAll (pkgs: {
