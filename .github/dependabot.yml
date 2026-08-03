@@ -25,11 +25,15 @@
 #     byte-identical deps.yml, and every OTHER action pin (checkout,
 #     setup-node, setup-deno) going stale the same way.
 #
-# Dependabot converges callers onto the head of each action's default branch,
-# which is what the template pin IS at bump time. The census stays on as the
-# independent verifier that convergence actually happened — Dependabot proposes,
-# a human merges, the Monday census proves. Once the fleet reads current, flip
-# caller-pins' `fail-on-lag` to true and the loop is closed: plan must be empty.
+# Dependabot converges callers onto each referenced repo's LATEST TAG — not its
+# default-branch head. An untagged repo is invisible to it: guest-room ran this
+# exact ecosystem weekly since June and its group PR bumped checkout/codeql pins
+# while leaving the osv-scan pin three template moves behind, because
+# ci-workflows had no tags. release-tag.yml now mints one per lane change,
+# which is the piece of state that makes this config able to act on the lane
+# pin at all. The census stays on as the independent verifier — Dependabot
+# proposes, a human merges, the Monday census proves. Once the fleet reads
+# current, flip caller-pins' `fail-on-lag` to true: plan must be empty.
 #
 # ADOPTING THIS FILE
 # ------------------
