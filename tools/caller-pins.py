@@ -60,6 +60,20 @@ import urllib.error
 import urllib.request
 
 API = "https://api.github.com"
+# Caller files are read from raw.githubusercontent, NOT the API's contents
+# endpoint, and that is a correctness fix rather than a preference.
+#
+# Unauthenticated api.github.com allows 60 requests/hour. The census makes one
+# call per repo — ~90 for this org — so the first run (30860781598) sailed past
+# the limit and took 23 consecutive HTTP 403s, silently truncating the census to
+# whichever repos happened to be alphabetically early. Authenticating would fix
+# the limit and break the census a different way: `github.token` is scoped to
+# THIS repo, so it cannot read another repo's contents at all.
+#
+# raw.githubusercontent serves public files from a CDN, is not metered against
+# that 60/hour budget, and needs no credential. The org listing stays on the API
+# because it has no raw equivalent — but that is one or two calls, not ninety.
+RAW = "https://raw.githubusercontent.com"
 CALLER_PATH = ".github/workflows/deps.yml"
 
 # `uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@<40hex>`.
@@ -147,18 +161,37 @@ def list_org_repos(org, token=None):
     return sorted(repos, key=lambda r: r["name"])
 
 
+# A cloud session's GH_TOKEN is the literal string `proxy-injected` — a sentinel,
+# not a credential. The real one is injected at the egress proxy for GitHub hosts,
+# so the variable is set and non-empty and cannot be presented to anything.
+# Forwarding it as `Authorization: Bearer proxy-injected` makes raw 404 EVERY
+# file, which reads exactly like "no repo has a caller". Caught here only because
+# the empty-census guard refuses to report success on zero rows.
+SENTINEL_TOKEN = "proxy-injected"
+
+
+def real_token(env=None):
+    """The ambient token, or None if it is absent or the session sentinel."""
+    env = os.environ if env is None else env
+    tok = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN") or ""
+    return None if (not tok or tok == SENTINEL_TOKEN) else tok
+
+
+def caller_url(org, repo):
+    """Where a caller file is read from. `HEAD` resolves to the default branch."""
+    return f"{RAW}/{org}/{repo}/HEAD/{CALLER_PATH}"
+
+
 def fetch_caller(org, repo, token=None):
     """The caller file's text, or None if the repo does not have one.
 
-    A 404 means "not a caller" and is normal. Anything else is an error worth
-    surfacing — a rate-limited 403 read as "no caller" would silently shrink the
-    census, which is the failure mode this whole file exists to prevent.
+    A 404 means "not a caller" and is normal. Anything else RAISES — a
+    rate-limited 403 quietly read as "no caller" would shrink the census while
+    still reporting success, which is the exact hollow-green shape this file
+    exists to close. Run 30860781598 is the evidence: 23 repos 403'd and the
+    summary line still printed a confident-looking `callers: 43`.
     """
-    status, body, _ = _get(
-        f"{API}/repos/{org}/{repo}/contents/{CALLER_PATH}",
-        token,
-        accept="application/vnd.github.raw",
-    )
+    status, body, _ = _get(caller_url(org, repo), token, accept="*/*")
     if status == 404:
         return None
     if status != 200:
@@ -189,7 +222,7 @@ def main(argv=None):
 
     import pathlib
     root = pathlib.Path(args.repo_root)
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or None
+    token = real_token()
     tpl = template_pin(root)
 
     if args.repos:
@@ -199,6 +232,12 @@ def main(argv=None):
 
     rows, errors, unreadable_private = [], [], 0
     for r in listing:
+        # A private repo is not on raw without a credential. Skipping it and
+        # COUNTING it is the honest move: attempting it would 404 and be
+        # indistinguishable from "has no caller", quietly shrinking the census.
+        if r["private"] and not token:
+            unreadable_private += 1
+            continue
         try:
             text = fetch_caller(args.org, r["name"], token)
         except RuntimeError as e:
@@ -217,8 +256,7 @@ def main(argv=None):
             "state": classify(sha, tpl, is_ancestor(sha, tpl, cwd=root)),
             **({"pins_found": n} if n != 1 else {}),
         })
-    if not token:
-        unreadable_private = sum(1 for r in listing if r["private"])
+    summary_note = f"{unreadable_private} private repo(s) were not examined" if unreadable_private else None
 
     behind = [r for r in rows if r["state"] == "behind"]
     summary = {
@@ -229,6 +267,7 @@ def main(argv=None):
         "unknown": sum(1 for r in rows if r["state"] == "unknown"),
         "ahead_or_diverged": sum(1 for r in rows if r["state"] == "ahead-or-diverged"),
         "authenticated": bool(token),
+        "unexamined_private": unreadable_private,
         "errors": len(errors),
     }
 
@@ -241,8 +280,8 @@ def main(argv=None):
             print(f"{mark} {r['repo']:<{width}}  {r['pin'][:7]}  {r['state']}")
         for e in errors:
             print(f"::warning::{e}")
-        if not token:
-            print(f"::notice::unauthenticated — {unreadable_private} private repo(s) were not examined")
+        if summary_note:
+            print(f"::notice::unauthenticated — {summary_note}")
         print()
     # One machine-readable line, the same idiom as FDS-CLAIM-RESULT / FDS-PARITY-RESULT:
     # greppable out of a job log without parsing the table.

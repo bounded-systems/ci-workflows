@@ -86,6 +86,41 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(caller_pins.classify(STALE, TEMPLATE, False), "ahead-or-diverged")
 
 
+class TestCallerUrl(unittest.TestCase):
+    def test_reads_from_raw_not_the_api(self):
+        # Load-bearing: the API's contents endpoint is capped at 60 req/hour
+        # unauthenticated, and the census makes one call per repo (~90). Run
+        # 30860781598 hit that ceiling and took 23 straight 403s. raw is a CDN,
+        # unmetered against that budget, and needs no credential.
+        url = caller_pins.caller_url("bounded-systems", "brand")
+        self.assertTrue(url.startswith("https://raw.githubusercontent.com/"))
+        self.assertNotIn("api.github.com", url)
+
+    def test_points_at_the_default_branch_and_the_caller_path(self):
+        url = caller_pins.caller_url("bounded-systems", "brand")
+        self.assertEqual(
+            url, "https://raw.githubusercontent.com/bounded-systems/brand/HEAD/.github/workflows/deps.yml"
+        )
+
+
+class TestRealToken(unittest.TestCase):
+    def test_sentinel_is_not_a_credential(self):
+        # A cloud session's GH_TOKEN is the literal string `proxy-injected`.
+        # Forwarding it as a Bearer makes raw 404 every file, which reads exactly
+        # like "no repo has a caller" — a silently empty census.
+        self.assertIsNone(caller_pins.real_token({"GH_TOKEN": "proxy-injected"}))
+
+    def test_empty_is_none(self):
+        self.assertIsNone(caller_pins.real_token({"GH_TOKEN": ""}))
+        self.assertIsNone(caller_pins.real_token({}))
+
+    def test_a_real_token_passes_through(self):
+        self.assertEqual(caller_pins.real_token({"GH_TOKEN": "ghs_abc123"}), "ghs_abc123")
+
+    def test_github_token_is_a_fallback(self):
+        self.assertEqual(caller_pins.real_token({"GITHUB_TOKEN": "ghs_xyz"}), "ghs_xyz")
+
+
 class TestTemplateIsItsOwnFixture(unittest.TestCase):
     def test_the_real_template_carries_a_pin(self):
         # Guards the comparison basis itself: if templates/deps.yml ever stops
