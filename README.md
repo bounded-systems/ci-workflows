@@ -200,19 +200,32 @@ The same shape, with one step that exists because skipping it is what
 
 1. Edit `.github/workflows/osv-scan.yml`
 2. Merge, and re-pin `templates/deps.yml` to the merge commit
-3. **Re-pin every caller** — dispatch `caller-pins.yml` to get the list
+3. **Let the callers converge, then verify.** Dependabot (`templates/dependabot.yml`,
+   vendored per repo as `.github/dependabot.yml`) opens each caller's re-pin PR on its
+   weekly cycle; a human merges. The Monday `caller-pins.yml` census proves the fleet
+   actually converged.
 
-Step 3 is not bookkeeping. `uses: …@<sha>` resolves the reusable workflow *at that
-commit*, so a caller's pin decides which scanner that repo actually runs: a lane
-improvement that stops at step 2 is merged and deployed to nobody. And unlike the
-canonical-script gate above, **nothing makes a stale caller go red on its own** — it
-keeps scanning happily under the old rules — which is why this one has to be run rather
-than waited for.
+Step 3 matters because `uses: …@<sha>` resolves the reusable workflow *at that commit*:
+a caller's pin decides which scanner that repo actually runs, a lane improvement that
+stops at step 2 is merged and deployed to nobody, and — unlike the canonical-script
+gate above — **nothing makes a stale caller go red on its own.** The 2026-08-03 census
+measured 43 of 58 callers behind for exactly this reason (ci-workflows#10).
 
-`caller-pins.yml` compares by **ancestry** (`git merge-base --is-ancestor`), not
-existence. `self-test`'s `template-pins` job already proves pins name real commits, and
-that is a different question: a stale pin *is* a real commit. `62990dd` resolves
-perfectly and is four commits behind.
+The division of labour is deliberate, and it is the OpenTofu shape: the template is the
+**desired state**, the census is the **plan** (an ancestry diff — `merge-base
+--is-ancestor` — because a stale pin *is* a real commit, so existence checks cannot see
+it; `62990dd` resolves perfectly and is four behind), Dependabot is the **apply**, and
+merging stays human. Once the fleet reads current, flip `caller-pins`' `fail-on-lag`
+to `true`: from then on the plan must be empty, and a caller that lags a week reds the
+Monday lane instead of drifting silently.
+
+Why Dependabot rather than a broker-credentialed re-pin bot: the engine is
+GitHub-maintained (nothing bespoke to keep working); a custom actor would need
+org-wide `contents:write` *plus* the `workflows` permission — GitHub rejects
+workflow-file pushes without it — minted from an entry that would make this repo's
+`main` a lever over every repo's contents; and Dependabot also covers what the census
+cannot see: consumers that call the lane from inside a combined workflow (infra's
+`_infra-test.yml`) and every other action pin going stale the same way.
 
 **Two copies, currently in step.** `infra` and `front-desk-scheduler` both carry
 `c530b86a…`, byte-identical to canonical as of adoption — so this gate was introduced
