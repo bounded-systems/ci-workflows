@@ -1,0 +1,102 @@
+name: release-tag
+# Mint a version tag on every merge that changes what the fleet consumes.
+#
+# WHY TAGS EXIST AT ALL — Dependabot cannot see an untagged repo.
+# ----------------------------------------------------------------
+# The fleet's convergence loop (ci-workflows#10, #21) is: template = desired
+# state, caller-pins census = plan, Dependabot = apply. Dependabot resolves
+# "latest" for a SHA-pinned `uses:` via the referenced repo's TAGS — an
+# untagged repo offers it nothing to resolve against, so the pin is invisible
+# to it. That is not a guess: guest-room has run Dependabot weekly on the
+# github-actions ecosystem since June, and its refreshed group PR (#61,
+# 2026-08-03) bumps checkout/codeql/scorecard pins across three files while
+# leaving deps.yml's osv-scan pin untouched at 8b7d8a8 — three template moves
+# behind. Same engine, same config; the only difference is that those actions
+# have tags and this repo had none.
+#
+# So the tag is not ceremony. It is the piece of state that makes the managed
+# applier able to act, which keeps the whole loop free of bespoke actors and
+# broker credentials. This workflow holds contents:write on THIS repo only —
+# nothing org-wide, nothing minted, no new standing grant.
+#
+# WHAT GETS TAGGED
+# ----------------
+# Every push to main touching the reusable lanes, the templates they are
+# copied from, or the tools they embed. Patch-increment by default (v0.1.0 →
+# v0.1.1); a deliberate minor/major is a workflow_dispatch with the `tag`
+# input. Tags are lightweight and immutable-by-convention: a tag once pushed
+# is never moved — Dependabot and the callers' `# vX.Y.Z` provenance comments
+# both assume a tag names one commit forever.
+#
+# Callers do not reference tags directly — they stay SHA-pinned (org policy).
+# Dependabot rewrites both the SHA and the trailing `# vX.Y.Z` comment, which
+# is exactly the shape check_template_pins.py requires.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/osv-scan.yml"
+      - ".github/workflows/env-check-drift.yml"
+      - ".github/workflows/env-record.yml"
+      - "templates/**"
+      - "tools/**"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Explicit tag to mint (e.g. v1.0.0) for a deliberate minor/major.
+          Blank = next patch after the latest v* tag (v0.1.0 if none exist).
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  # Serialize: two merges racing to compute "next patch" must not mint the
+  # same tag twice. cancel-in-progress stays false — every merge gets a tag.
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Tags need history to enumerate; persist-credentials stays ON here,
+          # deliberately unlike every other lane in this repo — the push below
+          # is the entire job.
+          fetch-depth: 0
+
+      - name: Compute and push the tag
+        env:
+          EXPLICIT: ${{ inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          if [ -n "${EXPLICIT}" ]; then
+            case "${EXPLICIT}" in
+              v[0-9]*.[0-9]*.[0-9]*) tag="${EXPLICIT}" ;;
+              *) echo "::error::explicit tag '${EXPLICIT}' is not vX.Y.Z"; exit 1 ;;
+            esac
+          else
+            latest="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)"
+            if [ -z "${latest}" ]; then
+              tag="v0.1.0"
+            else
+              base="${latest#v}"
+              major="${base%%.*}"; rest="${base#*.}"
+              minor="${rest%%.*}"; patch="${rest#*.}"
+              tag="v${major}.${minor}.$((patch + 1))"
+            fi
+          fi
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::${tag} already exists — tags are never moved. Use a dispatch with an explicit higher tag."
+            exit 1
+          fi
+          git tag "${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}"
+          echo "FDS-RELEASE-TAG {\"tag\":\"${tag}\",\"sha\":\"${GITHUB_SHA}\"}"
+          echo "### ${tag} → ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"

@@ -199,11 +199,19 @@ The same shape, with one step that exists because skipping it is what
 [#10](https://github.com/bounded-systems/ci-workflows/issues/10) is about:
 
 1. Edit `.github/workflows/osv-scan.yml`
-2. Merge, and re-pin `templates/deps.yml` to the merge commit
+2. Merge, and re-pin `templates/deps.yml` to the merge commit — `release-tag.yml`
+   mints the version tag on that push automatically
 3. **Let the callers converge, then verify.** Dependabot (`templates/dependabot.yml`,
    vendored per repo as `.github/dependabot.yml`) opens each caller's re-pin PR on its
    weekly cycle; a human merges. The Monday `caller-pins.yml` census proves the fleet
    actually converged.
+
+The tag in step 2 is load-bearing, not ceremony: **Dependabot resolves a SHA-pinned
+`uses:` via the referenced repo's tags, so an untagged repo is invisible to it.**
+Measured, not assumed — guest-room ran this exact Dependabot config weekly since June,
+and its refreshed group PR (guest-room#61) bumped `checkout`/`codeql`/`scorecard` pins
+across three files while leaving `deps.yml`'s osv-scan pin untouched at `8b7d8a8`,
+three template moves behind. Same engine, same config; the only difference was tags.
 
 Step 3 matters because `uses: …@<sha>` resolves the reusable workflow *at that commit*:
 a caller's pin decides which scanner that repo actually runs, a lane improvement that
