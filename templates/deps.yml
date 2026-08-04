@@ -92,6 +92,11 @@ permissions:
   contents: read
 jobs:
   osv:
-    # SHA-pinned per org policy. `# main` records what the SHA was at the time, so a
-    # reviewer can tell an intentional bump from a drifted one.
-    uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@162accbbcfdfd12c146c44f23770e6a6bb9abb1c # main
+    # SHA-pinned per org policy. The trailing `# vX.Y.Z` comment is LOAD-BEARING,
+    # not provenance decoration: Dependabot establishes what version a SHA pin IS
+    # from its tag comment, and a pin commented `# main` (a branch) gives it no
+    # version to reason from — so it skips the pin entirely, even when newer tags
+    # exist. Measured 2026-08-04: Dependabot's first fleet run bumped mint's
+    # tag-anchored refs (v0.3.1 → v0.5.0) in the same PRs that left every
+    # `# main`-commented osv-scan pin untouched. Keep the comment a real tag.
+    uses: bounded-systems/ci-workflows/.github/workflows/osv-scan.yml@07cab5289be65cb2ae09e7631fcc1a35bceb1ad4 # v0.1.0
