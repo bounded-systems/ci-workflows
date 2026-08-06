@@ -6,8 +6,11 @@ name: self-test
 #
 #   1. the release URL still serves, and the pinned digest still matches
 #      (an upstream re-tag or a silently replaced asset fails here first, not downstream);
-#   2. the `--allow-no-lockfiles` path exits 0 rather than red-lining a repo with
-#      nothing scannable — the common case across this org;
+#   2. discovery-to-scan runs end-to-end on explicit targets: `git ls-files` + the
+#      converted SBOM feed the scanner real --lockfile args (.github#103). The
+#      zero-target "nothing scannable, passing explicitly" posture cannot be
+#      exercised here — this repo always has the fixture SBOM as a target — so it
+#      is pinned by the Discovery tests in test/test_scan_posture.py instead;
 #   3. the deno.lock convert step runs end-to-end: the synthetic fixture lock under
 #      test/fixtures/ is found, converted, and its SBOM scanned. The fixture's package
 #      names are made up, so no real-world advisory can ever redden this lane for

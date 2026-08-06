@@ -16,6 +16,7 @@
 # findings (exit 1) and nothing else. A tool/network failure (any other non-zero) fails
 # hard even under grace — a lane that cannot run must never report green.
 import datetime
+import os
 import pathlib
 import re
 import subprocess
@@ -27,12 +28,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "osv-scan.yml"
 
 
-def extract_scan_step():
-    """Pull the scan step's run: block out of the workflow without needing PyYAML."""
+def extract_step(name):
+    """Pull a named step's run: block out of the workflow without needing PyYAML."""
     lines = WORKFLOW.read_text().split("\n")
     start = next(
         i for i, l in enumerate(lines)
-        if l.strip().startswith("- name: Scan dependencies for known vulnerabilities")
+        if l.strip().startswith(f"- name: {name}")
     )
     run_at = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
     base = len(lines[run_at]) - len(lines[run_at].lstrip()) + 2
@@ -44,8 +45,17 @@ def extract_scan_step():
     return "\n".join(body) + "\n"
 
 
+def extract_scan_step():
+    return extract_step("Scan dependencies for known vulnerabilities")
+
+
+def extract_discovery_step():
+    return extract_step("Discover scan targets")
+
+
 class ScanPosture(unittest.TestCase):
-    def run_step(self, scanner_exit, report_only, grace_expires=""):
+    def run_step(self, scanner_exit, report_only, grace_expires="",
+                 targets="--lockfile=stub.lock"):
         with tempfile.TemporaryDirectory() as td:
             td = pathlib.Path(td)
             stub = td / "osv-scanner"
@@ -58,9 +68,13 @@ class ScanPosture(unittest.TestCase):
                 ["bash", "-e", str(script)],
                 capture_output=True, text=True,
                 env={
-                    "PATH": f"{td}:/usr/bin:/bin",
+                    # The stub dir comes FIRST so it shadows any real osv-scanner;
+                    # the ambient PATH after it is what lets bash/git resolve in
+                    # both runners (the nix sandbox has no /usr/bin).
+                    "PATH": f"{td}:" + os.environ.get("PATH", "/usr/bin:/bin"),
                     "REPORT_ONLY": report_only,
                     "GRACE_EXPIRES": grace_expires,
+                    "TARGETS": targets,
                 },
             )
 
@@ -91,6 +105,117 @@ class ScanPosture(unittest.TestCase):
     def test_step_actually_clears_errexit(self):
         # Guards the fix directly, so the intent survives a future refactor of the body.
         self.assertRegex(extract_scan_step(), r"(?m)^\s*set \+e\s*$")
+
+    def test_empty_target_list_fails_loudly(self):
+        # The step is gated on discovery's count != 0, so an empty TARGETS means the
+        # gate itself broke. That must be a red, never a scan of nothing — even with
+        # a scanner that would have exited 0.
+        r = self.run_step(0, "false", targets="")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("::error::", r.stdout)
+        self.assertNotIn("stub scanner", r.stdout)
+
+
+class Discovery(unittest.TestCase):
+    """The discovery step is the fix for the hooksmith#108 class (.github#103): git,
+    not the scanner's directory walk, decides what gets scanned.
+
+    Each case runs the step's run: block against a synthesized git repo. The one that
+    matters most is the gitignored-but-tracked lockfile — the exact shape that shipped
+    sixteen advisories behind a green check for months, because osv-scanner's walk
+    applies .gitignore patterns without git's tracked-file exemption.
+    """
+
+    def run_discovery(self, setup):
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            repo = td / "repo"
+            repo.mkdir()
+            out = td / "github_output"
+            out.touch()
+            # HOME is pointed away from the real one so a developer's global git
+            # config (core.excludesFile especially) cannot leak into the fixture.
+            env = dict(os.environ, HOME=str(td), GITHUB_OUTPUT=str(out))
+
+            def git(*args):
+                subprocess.run(["git", *args], cwd=repo, check=True,
+                               capture_output=True, env=env)
+
+            git("init", "-q")
+            setup(repo, git)
+            script = td / "step.sh"
+            script.write_text(extract_discovery_step())
+            r = subprocess.run(
+                ["bash", "-e", str(script)],
+                cwd=repo, capture_output=True, text=True, env=env,
+            )
+            return r, out.read_text()
+
+    def test_gitignored_tracked_lockfile_is_still_discovered(self):
+        # THE regression test. Tracked + listed in .gitignore is what blinded the
+        # recursive walk; git ls-files must surface it anyway.
+        def setup(repo, git):
+            (repo / "Cargo.lock").write_text("")
+            git("add", "-f", "Cargo.lock")
+            (repo / ".gitignore").write_text("Cargo.lock\n")
+            git("add", ".gitignore")
+
+        r, out = self.run_discovery(setup)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("count=1", out)
+        self.assertIn("--lockfile=Cargo.lock", out)
+
+    def test_no_targets_is_an_explicit_logged_pass(self):
+        r, out = self.run_discovery(lambda repo, git: None)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("count=0", out)
+        self.assertIn("nothing scannable", r.stdout)
+
+    def test_untracked_lockfile_is_not_a_target(self):
+        # Git is the authority in both directions: a lockfile on disk but not
+        # tracked is not scanned, rather than depending on walk order and ignores.
+        def setup(repo, git):
+            (repo / "package-lock.json").write_text("{}")
+
+        r, out = self.run_discovery(setup)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("count=0", out)
+
+    def test_converted_sbom_joins_the_target_list(self):
+        # deno-lock.cdx.json is written by the convert step and is untracked by
+        # construction — it must be targeted anyway (via find, not ls-files).
+        def setup(repo, git):
+            (repo / "deno-lock.cdx.json").write_text("{}")
+
+        r, out = self.run_discovery(setup)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("count=1", out)
+        self.assertIn("--lockfile=./deno-lock.cdx.json", out)
+
+    def test_tracked_lockfiles_enumerate_across_ecosystems_and_depths(self):
+        def setup(repo, git):
+            (repo / "go.mod").write_text("")
+            (repo / "sub").mkdir()
+            (repo / "sub" / "bun.lock").write_text("")
+            git("add", "go.mod", "sub/bun.lock")
+
+        r, out = self.run_discovery(setup)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("count=2", out)
+        self.assertIn("--lockfile=go.mod", out)
+        self.assertIn("--lockfile=sub/bun.lock", out)
+
+    def test_basename_match_is_exact_not_substring(self):
+        # `not-a-go.mod` or `go.mod.bak` must not sneak in: a file the scanner
+        # cannot parse would red the run, so the match anchors on path boundaries.
+        def setup(repo, git):
+            (repo / "not-a-go.mod").write_text("")
+            (repo / "go.mod.bak").write_text("")
+            git("add", "not-a-go.mod", "go.mod.bak")
+
+        r, out = self.run_discovery(setup)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("count=0", out)
 
 
 class GraceExpiry(unittest.TestCase):
