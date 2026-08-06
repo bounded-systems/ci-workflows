@@ -114,8 +114,8 @@ jobs:
       # deno.lock has no osv-scanner extractor (see the coverage note below), but a
       # v4/v5 lock already CONTAINS the fully-resolved npm graph — Deno's npm-compat
       # layer did the resolution. This step re-encodes that npm subset as a CycloneDX
-      # SBOM next to each lock; the scan step's directory walk then picks the SBOMs up
-      # by filename, no scanner flags needed. JSR-native deps and @jsr/* npm-compat
+      # SBOM next to each lock; the discovery step below then passes each SBOM to the
+      # scanner as an explicit target. JSR-native deps and @jsr/* npm-compat
       # mirrors are deliberately excluded — OSV has no JSR ecosystem and no advisory
       # can exist for npm.jsr.io-served packages under an npm purl, so including them
       # would inflate the "scanned" count without adding coverage. Each lock logs its
@@ -258,29 +258,78 @@ jobs:
           if __name__ == "__main__":
               raise SystemExit(main(sys.argv))
           PY
-          done < <(find . -name deno.lock -not -path '*/node_modules/*' -not -path '*/.git/*' | sort)
+          done < <(git ls-files | grep -E '(^|/)deno\.lock$' || true)
+          # git ls-files, not find: git is the authority on what is tracked (see the
+          # discovery step below for the full rationale). ls-files output is already
+          # path-sorted, so conversion order — and therefore log order — is stable.
 
-      # `scan source -r` walks the tree and picks its own extractors, rather than
-      # `find`-ing package-lock.json the way infra's inline job does. That matters here:
-      # infra has one npm lockfile, but the ~90 repos this fans out to are a mix of npm,
-      # Cargo, Go, Python and Maven, and a hardcoded npm-only find would silently report
-      # "nothing to scan" on every one of them.
+      # git is the authority on what gets scanned — NOT the scanner's directory walk.
+      # `scan source -r` applies .gitignore PATTERNS without git's tracked-file
+      # exemption, so a repo that lists its own committed lockfile in .gitignore had
+      # that lockfile silently skipped, and --allow-no-lockfiles turned "extracted
+      # nothing" into exit 0. hooksmith#108 shipped sixteen advisories behind exactly
+      # that green for months; unblinded, the same tree reported 11 vulnerabilities
+      # across 446 packages. Explicit --lockfile targets from `git ls-files` make the
+      # class unrepresentable rather than detectable: every tracked lockfile is either
+      # scanned or reds the run out loud, and "nothing scannable" is a logged,
+      # deliberate pass instead of a silent one. Same fix as the .github repo's
+      # repo-standard.yml osv job (.github#102); this is .github#103.
       #
-      # NOT covered: deno.lock. osv-scanner 2.4.0 ships no extractor for it — an explicit
-      # `--lockfile=deno.lock` fails with "could not determine extractor suitable to this
-      # file". Deno-first repos in this org are therefore scanned only for whatever OTHER
-      # manifests they carry, and a green check here does NOT mean their JSR/npm graph
-      # was examined. Tracked in infra#104.
+      # The basename list mirrors repo-standard.yml's: exact names osv-scanner 2.4.0
+      # ships an extractor for, across every ecosystem the fleet carries — the old
+      # walk's one real virtue, multi-ecosystem coverage, is kept by listing the
+      # ecosystems rather than trusting the walk. A file matched here that the
+      # scanner cannot parse reds the run rather than being skipped. Extending the
+      # list is a reviewed diff.
       #
-      # --allow-no-lockfiles: a repo with nothing scannable is a pass, not a failure. That
-      # is the common case across the org and must not read as a broken lane.
+      # NOT covered, still: deno.lock. osv-scanner 2.4.0 ships no extractor for it —
+      # an explicit `--lockfile=deno.lock` fails with "could not determine extractor
+      # suitable to this file" — which is why it is deliberately absent from the
+      # basename list. The convert step above re-encodes each tracked lock's npm
+      # subset as an SBOM, and those SBOMs join the target list here via find, not
+      # ls-files: they are untracked by construction. JSR-native deps remain
+      # unscannable (no OSV ecosystem) and each converted lock logs that per run.
+      # Tracked in infra#104.
+      - name: Discover scan targets
+        id: targets
+        working-directory: ${{ inputs.scan-path }}
+        run: |
+          set -euo pipefail
+          names='Cargo.lock|composer.lock|Gemfile.lock|go.mod|mix.lock|package-lock.json|pnpm-lock.yaml|yarn.lock|bun.lock|poetry.lock|pdm.lock|uv.lock|Pipfile.lock|requirements.txt|renv.lock|pubspec.lock|conan.lock|packages.lock.json|gradle.lockfile|buildscript-gradle.lockfile|Package.resolved'
+          mapfile -t targets < <(git ls-files | grep -E "(^|/)(${names})\$" || true)
+          mapfile -t -O "${#targets[@]}" targets < <(find . -name deno-lock.cdx.json -not -path '*/node_modules/*' -not -path '*/.git/*' | sort)
+          {
+            echo "count=${#targets[@]}"
+            echo 'args<<EOF'
+            for f in "${targets[@]+"${targets[@]}"}"; do echo "--lockfile=$f"; done
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          if [ "${#targets[@]}" -eq 0 ]; then
+            # Explicit, because "nothing scannable" and "scanned and clean" must never
+            # look alike — the hooksmith#108 tell was silence next to a green check.
+            echo "::notice::osv: no tracked lockfiles and no converted deno.lock SBOMs — nothing scannable, passing explicitly."
+          else
+            printf 'osv: %d scan target(s):\n' "${#targets[@]}"
+            printf '  %s\n' "${targets[@]}"
+          fi
+
       - name: Scan dependencies for known vulnerabilities
+        if: ${{ steps.targets.outputs.count != '0' }}
         working-directory: ${{ inputs.scan-path }}
         env:
           REPORT_ONLY: ${{ inputs.report-only }}
           GRACE_EXPIRES: ${{ inputs.grace-expires }}
+          TARGETS: ${{ steps.targets.outputs.args }}
         run: |
           set -uo pipefail
+          # The `if:` gate above skips this step when discovery found nothing, so an
+          # empty target list here means the gate itself broke. Refuse to scan
+          # nothing — a lane that cannot run must never report green.
+          if [ -z "${TARGETS}" ]; then
+            echo "::error::scan step ran with an empty target list — the discovery gate should have skipped it."
+            exit 1
+          fi
+          mapfile -t lockargs <<< "${TARGETS}"
           # `set +e` is LOAD-BEARING, not redundant. GitHub invokes run steps as
           # `bash -e {0}` — errexit arrives on the COMMAND LINE, so a `set -uo pipefail`
           # here leaves it on, and the shell would exit the moment osv-scanner returns 1,
@@ -304,7 +353,7 @@ jobs:
           # the tree instead of a silently weakened lane. Give it an `ignoreUntil` —
           # osv-scanner expires the entry itself and the finding returns (verified against
           # 2.4.0: past date => "unused ignores" and exit 1). REMEDIATION.md, rung 4.
-          osv-scanner scan source -r --allow-no-lockfiles .
+          osv-scanner scan source "${lockargs[@]}"
           rc=$?
           set -e
           if [ "$rc" -eq 0 ]; then

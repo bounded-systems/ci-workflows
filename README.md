@@ -106,14 +106,20 @@ rather than quietly weakening the lane.
 
 ## Coverage — read this before assuming a green check means much
 
-`scan source -r` walks the tree and selects its own extractors, so npm, Cargo, Go, Python,
-Maven and the other ecosystems OSV-Scanner supports are all discovered without
-configuration.
+Scan targets are derived from `git ls-files` against a multi-ecosystem basename list
+(npm, Cargo, Go, Python, Maven and the other ecosystems OSV-Scanner supports) and passed
+as explicit `--lockfile=` args — the same list as the org's `repo-standard.yml` osv job.
+The scanner's own `-r` directory walk is deliberately not used: it applies `.gitignore`
+*patterns* without git's tracked-file exemption, so a repo that gitignored its own
+committed lockfile scanned nothing and still reported green — hooksmith#108 shipped
+sixteen advisories behind exactly that for months (fixed as .github#103; the tell in the
+log is `0 Extract calls` next to a green check).
 
 **`deno.lock` has no osv-scanner extractor**, but the lane covers its npm subset anyway
 ([#1](https://github.com/bounded-systems/ci-workflows/issues/1)): a v4/v5 lock already
 contains the fully-resolved npm graph, so a convert step re-encodes it as a CycloneDX SBOM
-(`tools/deno-lock-cdx.py`, embedded in the workflow) that the scan picks up by filename.
+(`tools/deno-lock-cdx.py`, embedded in the workflow) that the discovery step passes to the
+scanner explicitly.
 Concretely, on `front-desk-scheduler` that turned 0 scanned deno.lock packages into 103.
 
 What a Deno-first repo's green check means, bucket by bucket — the scan log prints these
@@ -132,7 +138,9 @@ locally with `nix flake check`. Unsupported lock versions (v3 and older) produce
 `::warning::` and are skipped, not a red X — they were previously scanned as nothing at
 all, and adoption should not force lock migrations.
 
-A repo with nothing scannable passes (`--allow-no-lockfiles`) rather than red-lining.
+A repo with nothing scannable passes explicitly — the discovery step logs "nothing
+scannable, passing explicitly" and the scan step is skipped — rather than red-lining.
+"Scanned nothing" and "scanned and clean" are always distinguishable in the log.
 
 **Scans run on PR/push only.** An advisory published *after* a lock merges goes unnoticed
 until the next change. Cheap fix, per caller: add a `schedule:` cron to the caller

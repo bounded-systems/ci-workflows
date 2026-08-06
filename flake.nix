@@ -27,12 +27,15 @@
     in
     {
       checks = forAll (pkgs: {
-        # Mirrors self-test's `converter` job, step for step.
+        # Mirrors self-test's `converter` job, step for step. git on PATH for the
+        # posture suite only: its Discovery tests run the workflow's `git ls-files`
+        # target discovery against synthesized repos (offline — init/add only), the
+        # same shape as env-record borrowing nodejs below.
         converter = pkgs.runCommand "converter-tests" { } ''
           cd ${self}
           ${pkgs.python3}/bin/python3 test/test_converter.py
           ${pkgs.python3}/bin/python3 test/check_embed_sync.py
-          ${pkgs.python3}/bin/python3 test/test_scan_posture.py
+          PATH=${pkgs.gitMinimal}/bin:$PATH ${pkgs.python3}/bin/python3 test/test_scan_posture.py
           touch $out
         '';
 
