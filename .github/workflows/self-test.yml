@@ -75,6 +75,22 @@ jobs:
       - name: env-record accepts consistent records and rejects stale ones
         run: python3 test/test_env_record.py
 
+  # --verify-domains reconciles probes against per-entry "expect" (#27). Run
+  # hermetically — a shimmed curl answers the probes — because the case that
+  # matters is red-on-disagreement in BOTH directions, and the
+  # reachable-but-recorded-blocked direction cannot be produced on demand
+  # against real hosts. Same hollow-green logic as env-record above: a version
+  # that only failed in the old direction would look identical here to one
+  # that works, unless this job asks for the new direction by name.
+  verify-domains:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: verify-domains reconciles observation against expectation, both directions
+        run: python3 test/test_verify_domains.py
+
   # Resolves the SHAs in templates/ against real commits. The COMPLEMENT of
   # check_template_pins.py, not a duplicate — see that script's header for the split.
   # Shape is checkable offline and runs in both runners; resolution needs git history,
